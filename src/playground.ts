@@ -55,6 +55,20 @@ export function renderApiPlayground(config: RuntimeConfig): string {
         margin-bottom: 16px;
       }
 
+      .hero-heading {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .hero-copy {
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+      }
+
       .hero-top {
         display: flex;
         align-items: center;
@@ -162,14 +176,6 @@ export function renderApiPlayground(config: RuntimeConfig): string {
       .request-section {
         display: grid;
         gap: 2px;
-      }
-
-      .workspace-heading {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
       }
 
       .backend-chip {
@@ -398,6 +404,14 @@ export function renderApiPlayground(config: RuntimeConfig): string {
           flex-direction: column;
         }
 
+        .hero-heading {
+          flex-direction: column;
+        }
+
+        .backend-chip {
+          width: 100%;
+        }
+
         .send {
           width: 100%;
         }
@@ -429,10 +443,19 @@ export function renderApiPlayground(config: RuntimeConfig): string {
           </div>
           <p class="pill">Local tooling for manual API calls</p>
         </div>
-        <h1>Equipments API Playground</h1>
-        <p class="subtitle">
-          Load a common workflow, tweak the path or JSON body, and send requests directly to the running service.
-        </p>
+        <div class="hero-heading">
+          <div class="hero-copy">
+            <h1>Equipments API Playground</h1>
+            <p class="subtitle">
+              Load a common workflow, tweak the path or JSON body, and send requests directly to the running service.
+            </p>
+          </div>
+          <div class="backend-chip" aria-live="polite">
+            <span class="backend-label">Active Backend</span>
+            <strong class="backend-value">${backendLabel}</strong>
+            <span class="backend-detail">${backendDescription}</span>
+          </div>
+        </div>
       </section>
 
       <section class="layout">
@@ -464,14 +487,7 @@ export function renderApiPlayground(config: RuntimeConfig): string {
 
         <section class="panel panel-body workspace">
           <div class="request-section">
-            <div class="workspace-heading">
-              <h2>Request</h2>
-              <div class="backend-chip" aria-live="polite">
-                <span class="backend-label">Active Backend</span>
-                <strong class="backend-value">${backendLabel}</strong>
-                <span class="backend-detail">${backendDescription}</span>
-              </div>
-            </div>
+            <h2>Request</h2>
             <div class="request-grid">
               <label>
                 Method
