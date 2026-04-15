@@ -304,7 +304,7 @@ textarea {
 .dev-tools {
   display: grid;
   gap: 8px;
-  width: min(100%, 320px);
+  width: 100%;
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(248, 113, 113, 0.24);
