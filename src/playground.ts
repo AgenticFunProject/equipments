@@ -80,11 +80,20 @@ export function renderApiPlayground(): string {
 
       .catalog-group h2,
       .workspace h2 {
-        margin: 0 0 10px;
+        margin: 0;
         font-size: 0.95rem;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: #7dd3fc;
+      }
+
+      .catalog-group h2 {
+        margin: 0 0 10px;
+      }
+
+      .request-section {
+        display: grid;
+        gap: 8px;
       }
 
       button,
@@ -328,7 +337,7 @@ export function renderApiPlayground(): string {
         </aside>
 
         <section class="panel panel-body workspace">
-          <div>
+          <div class="request-section">
             <h2>Request</h2>
             <div class="request-grid">
               <label>
