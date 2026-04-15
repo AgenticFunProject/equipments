@@ -164,6 +164,7 @@ export function renderApiPlayground(config: RuntimeConfig): string {
       .workspace h2 {
         margin: 0;
         font-size: 0.95rem;
+        line-height: 1;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: #7dd3fc;
