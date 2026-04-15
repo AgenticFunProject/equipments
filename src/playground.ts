@@ -175,7 +175,7 @@ export function renderApiPlayground(config: RuntimeConfig): string {
 
       .request-section {
         display: grid;
-        gap: 2px;
+        gap: 0;
       }
 
       .backend-chip {
