@@ -190,22 +190,32 @@ npm test
 - `POST /containers/{id}/return`
 - `POST /events` (consumes `booking.cancelled` and `booking.completed`)
 
-### Notes on Current Persistence
+### Runtime Storage Backends
 
-The v1 implementation uses an in-memory store for fast iteration and testability.
-To productionize, replace `EquipmentsStore` internals with persistent storage while
-keeping the same domain rules and route contract.
+The service now supports runtime-selectable persistence entirely in TypeScript.
+The same API and domain rules run on top of one of these backends:
 
-### Go storage backend flags
+- `memory` (default) keeps state in-process only
+- `db` persists a JSON snapshot to disk
+- `sqlite` persists the same snapshot in a SQLite database
+- SQLite aliases: `sqlite3`, `sql`, `persistent-sqlite`, `persistent-sqlite3`
 
-The repository also includes a small Go storage package in `storage/` used by runtime tools.
+Environment variables:
 
-- `STORAGE_BACKEND` selects backend mode:
-  - `memory` (default)
-  - `db` (JSON file persistence)
-  - `sqlite` (SQLite file persistence)
-  - SQLite aliases: `sqlite3`, `sql`, `persistent-sqlite`, `persistent-sqlite3`
-- `STORAGE_DB_PATH` path to persistent file:
-  - required when `STORAGE_BACKEND=db`
-  - accepted as fallback when `STORAGE_BACKEND=sqlite`
-- `STORAGE_SQLITE_PATH` preferred SQLite database path when `STORAGE_BACKEND=sqlite`
+- `STORAGE_BACKEND` selects the backend mode
+- `STORAGE_DB_PATH` is required when `STORAGE_BACKEND=db`
+- `STORAGE_SQLITE_PATH` is preferred when `STORAGE_BACKEND=sqlite`
+- `STORAGE_DB_PATH` is also accepted as a fallback for `sqlite`
+
+Examples:
+
+```bash
+# in-memory (default)
+npm run dev
+
+# JSON file persistence
+STORAGE_BACKEND=db STORAGE_DB_PATH=.data/equipments.json npm run dev
+
+# SQLite persistence
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run dev
+```

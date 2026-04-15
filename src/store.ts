@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { DomainError } from "./errors.js";
+import { createPersistence, type RuntimeConfig, type StorePersistence, type StoreSnapshot } from "./persistence.js";
 import {
   type ContainerUnit,
   ContainerStatus,
@@ -21,10 +22,19 @@ export class EquipmentsStore {
   private containers = new Map<string, ContainerUnit>();
   private reservations = new Map<string, Reservation>();
   private reservationByBooking = new Map<string, string>();
+  private persistence: StorePersistence | null;
 
-  constructor(seed = true) {
+  constructor(seed = true, persistence: StorePersistence | null = null) {
+    this.persistence = persistence;
+    const snapshot = this.persistence?.load();
+    if (snapshot) {
+      this.restore(snapshot);
+      return;
+    }
+
     if (seed) {
       this.seedData();
+      this.persist();
     }
   }
 
@@ -49,6 +59,7 @@ export class EquipmentsStore {
     };
     this.validateEquipmentType(equipmentType);
     this.equipmentTypes.set(code, equipmentType);
+    this.persist();
     return equipmentType;
   }
 
@@ -67,6 +78,7 @@ export class EquipmentsStore {
     };
     this.validateEquipmentType(next);
     this.equipmentTypes.set(key, next);
+    this.persist();
     return next;
   }
 
@@ -101,6 +113,7 @@ export class EquipmentsStore {
       createdAt: now
     };
     this.containers.set(container.id, container);
+    this.persist();
     return container;
   }
 
@@ -138,6 +151,7 @@ export class EquipmentsStore {
     if (container.status === ContainerStatus.AVAILABLE) {
       container.bookingReference = null;
     }
+    this.persist();
     return container;
   }
 
@@ -224,6 +238,7 @@ export class EquipmentsStore {
     };
     this.reservations.set(reservation.id, reservation);
     this.reservationByBooking.set(bookingReference, reservation.id);
+    this.persist();
 
     return {
       reservation,
@@ -257,6 +272,7 @@ export class EquipmentsStore {
     }
 
     reservation.status = ReservationStatus.RELEASED;
+    this.persist();
     return reservation;
   }
 
@@ -267,6 +283,7 @@ export class EquipmentsStore {
     }
     container.status = ContainerStatus.DISPATCHED;
     container.lastMovedAt = new Date().toISOString();
+    this.persist();
     return container;
   }
 
@@ -277,6 +294,7 @@ export class EquipmentsStore {
     }
     container.status = ContainerStatus.RETURNED;
     container.lastMovedAt = new Date().toISOString();
+    this.persist();
     return container;
   }
 
@@ -306,6 +324,7 @@ export class EquipmentsStore {
           this.returnContainer(container.id);
         }
       }
+      this.persist();
       return { processed: true };
     }
 
@@ -322,6 +341,21 @@ export class EquipmentsStore {
     if (!Number.isFinite(equipmentType.maxPayloadKg) || equipmentType.maxPayloadKg <= 0) {
       throw new DomainError("maxPayloadKg must be a positive number");
     }
+  }
+
+  private restore(snapshot: StoreSnapshot): void {
+    this.equipmentTypes = new Map(snapshot.equipmentTypes.map((equipmentType) => [equipmentType.code, equipmentType]));
+    this.containers = new Map(snapshot.containers.map((container) => [container.id, container]));
+    this.reservations = new Map(snapshot.reservations.map((reservation) => [reservation.id, reservation]));
+    this.reservationByBooking = new Map(snapshot.reservations.map((reservation) => [reservation.bookingReference, reservation.id]));
+  }
+
+  private persist(): void {
+    this.persistence?.save({
+      equipmentTypes: this.listEquipmentTypes(),
+      containers: Array.from(this.containers.values()),
+      reservations: Array.from(this.reservations.values())
+    });
   }
 
   private seedData(): void {
@@ -375,4 +409,8 @@ export class EquipmentsStore {
       this.registerContainer(container);
     }
   }
+}
+
+export function createStoreFromRuntimeConfig(config: RuntimeConfig, seed = true): EquipmentsStore {
+  return new EquipmentsStore(seed, createPersistence(config));
 }

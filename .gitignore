@@ -58,6 +58,11 @@ backup/
 # Per-project environment file (Dolt connection config, GH#2520)
 .env
 
+# Local agent state and build output
+.opencode/
+.runtime/
+dist/
+
 # Legacy files (from pre-Dolt versions)
 *.db
 *.db?*
