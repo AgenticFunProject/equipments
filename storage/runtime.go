@@ -8,6 +8,7 @@ import (
 const (
 	StorageBackendEnv = "STORAGE_BACKEND"
 	StoragePathEnv    = "STORAGE_DB_PATH"
+	StorageSQLiteEnv  = "STORAGE_SQLITE_PATH"
 )
 
 type RuntimeConfig struct {
@@ -27,6 +28,16 @@ func LoadRuntimeConfig() (RuntimeConfig, error) {
 		cfg.Path = os.Getenv(StoragePathEnv)
 		if cfg.Path == "" {
 			return RuntimeConfig{}, fmt.Errorf("%s is required when %s=%s", StoragePathEnv, StorageBackendEnv, BackendDB)
+		}
+	}
+
+	if backend == BackendSQLite {
+		cfg.Path = os.Getenv(StorageSQLiteEnv)
+		if cfg.Path == "" {
+			cfg.Path = os.Getenv(StoragePathEnv)
+		}
+		if cfg.Path == "" {
+			return RuntimeConfig{}, fmt.Errorf("%s or %s is required when %s=%s", StorageSQLiteEnv, StoragePathEnv, StorageBackendEnv, BackendSQLite)
 		}
 	}
 

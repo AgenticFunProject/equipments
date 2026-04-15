@@ -77,3 +77,39 @@ func TestNewFromRuntimeConfigUsesMemoryStore(t *testing.T) {
 		t.Fatalf("expected in-memory value roundtrip, got value=%q ok=%v", v, ok)
 	}
 }
+
+func TestLoadRuntimeConfigSQLiteRequiresPath(t *testing.T) {
+	t.Setenv(StorageBackendEnv, string(BackendSQLite))
+	t.Setenv(StorageSQLiteEnv, "")
+	t.Setenv(StoragePathEnv, "")
+
+	_, err := LoadRuntimeConfig()
+	if err == nil {
+		t.Fatal("expected error when sqlite backend path missing")
+	}
+}
+
+func TestNewFromRuntimeConfigUsesSQLiteStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data", "store.sqlite")
+	t.Setenv(StorageBackendEnv, "sqlite3")
+	t.Setenv(StorageSQLiteEnv, path)
+	t.Setenv(StoragePathEnv, "")
+
+	store, cfg, err := NewFromRuntimeConfig()
+	if err != nil {
+		t.Fatalf("NewFromRuntimeConfig() error = %v", err)
+	}
+
+	if cfg.Backend != BackendSQLite {
+		t.Fatalf("expected backend %q, got %q", BackendSQLite, cfg.Backend)
+	}
+
+	if err := store.Set("s", "1"); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	v, ok := store.Get("s")
+	if !ok || v != "1" {
+		t.Fatalf("expected sqlite value roundtrip, got value=%q ok=%v", v, ok)
+	}
+}

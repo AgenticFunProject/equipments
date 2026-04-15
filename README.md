@@ -195,3 +195,17 @@ npm test
 The v1 implementation uses an in-memory store for fast iteration and testability.
 To productionize, replace `EquipmentsStore` internals with persistent storage while
 keeping the same domain rules and route contract.
+
+### Go storage backend flags
+
+The repository also includes a small Go storage package in `storage/` used by runtime tools.
+
+- `STORAGE_BACKEND` selects backend mode:
+  - `memory` (default)
+  - `db` (JSON file persistence)
+  - `sqlite` (SQLite file persistence)
+  - SQLite aliases: `sqlite3`, `sql`, `persistent-sqlite`, `persistent-sqlite3`
+- `STORAGE_DB_PATH` path to persistent file:
+  - required when `STORAGE_BACKEND=db`
+  - accepted as fallback when `STORAGE_BACKEND=sqlite`
+- `STORAGE_SQLITE_PATH` preferred SQLite database path when `STORAGE_BACKEND=sqlite`
