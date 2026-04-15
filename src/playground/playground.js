@@ -43,6 +43,7 @@ const responseText = document.getElementById("responseText");
 const responseDetail = document.getElementById("responseDetail");
 const responseTime = document.getElementById("responseTime");
 const sendButton = document.getElementById("send");
+const resetAllDataButton = document.getElementById("resetAllData");
 
 function setResponseStatus(code, text, detail, tone) {
   responseCode.textContent = code;
@@ -122,9 +123,43 @@ async function sendRequest() {
   }
 }
 
+async function resetAllData() {
+  if (!resetAllDataButton) {
+    return;
+  }
+
+  resetAllDataButton.disabled = true;
+  setResponseStatus("Resetting", "Dev reset requested", "Clearing runtime data and restoring the seeded baseline.", "status-idle");
+  responseTime.textContent = "Duration: -";
+
+  const startedAt = performance.now();
+
+  try {
+    const response = await fetch("/dev/reset-all-data", { method: "POST" });
+    const duration = Math.round(performance.now() - startedAt);
+    const payload = JSON.stringify(await response.json(), null, 2);
+
+    setResponseStatus(
+      String(response.status),
+      response.ok ? "Reset complete" : (response.statusText || "Reset failed"),
+      response.ok ? "The service state was reset for local testing." : "Reset endpoint was unavailable or returned an error.",
+      response.ok ? "status-ok" : "status-error"
+    );
+    responseTime.textContent = `Duration: ${duration} ms`;
+    responseBodyInput.value = payload;
+  } catch (error) {
+    setResponseStatus("Request failed", "Network error", "The browser could not reach the reset endpoint.", "status-error");
+    responseTime.textContent = "Duration: -";
+    responseBodyInput.value = String(error);
+  } finally {
+    resetAllDataButton.disabled = false;
+  }
+}
+
 document.querySelectorAll(".preset").forEach((button) => {
   button.addEventListener("click", () => loadPreset(button.dataset.preset));
 });
 
 sendButton.addEventListener("click", sendRequest);
+resetAllDataButton?.addEventListener("click", resetAllData);
 loadPreset("availability");

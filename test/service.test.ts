@@ -37,6 +37,8 @@ test("GET /playground serves the HTML playground", async () => {
   assert.match(response.body, /memory/);
   assert.match(response.body, /\/playground\/playground\.css/);
   assert.match(response.body, /\/playground\/playground\.js/);
+  assert.match(response.body, /Reset All Data/);
+  assert.match(response.body, /Dev-only action/);
 });
 
 test("GET /playground shows configured backend path when present", async () => {
@@ -49,6 +51,15 @@ test("GET /playground shows configured backend path when present", async () => {
   assert.equal(response.statusCode, 200);
   assert.match(response.body, /sqlite/);
   assert.match(response.body, /\/tmp\/equipments\.sqlite/);
+});
+
+test("GET /playground hides reset controls outside development mode", async () => {
+  const app = buildServer(new EquipmentsStore(true), undefined, false);
+  const response = await app.inject({ method: "GET", url: "/playground" });
+
+  assert.equal(response.statusCode, 200);
+  assert.doesNotMatch(response.body, /Reset All Data/);
+  assert.match(response.body, /unavailable outside development mode/);
 });
 
 test("GET /playground/playground.css serves the stylesheet", async () => {
@@ -68,8 +79,59 @@ test("GET /playground/playground.js serves the client script", async () => {
   assert.match(response.headers["content-type"] ?? "", /^text\/javascript/);
   assert.match(response.body, /const presets =/);
   assert.match(response.body, /function resetResponseOutput\(/);
+  assert.match(response.body, /function resetAllData\(/);
   assert.match(response.body, /resetResponseOutput\(\);/);
   assert.match(response.body, /loadPreset\("availability"\)/);
+});
+
+test("POST /dev/reset-all-data resets state in development mode", async () => {
+  const app = createApp();
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/containers",
+    payload: {
+      containerNumber: "CONU9999999",
+      equipmentType: "20FT",
+      currentDepot: "CNSHA-01"
+    }
+  });
+  assert.equal(created.statusCode, 201);
+
+  const reserve = await app.inject({
+    method: "POST",
+    url: "/reservations",
+    payload: {
+      bookingReference: "BKG-RESET-1",
+      originDepot: "CNSHA-01",
+      equipment: [{ type: "20FT", quantity: 1 }]
+    }
+  });
+  assert.equal(reserve.statusCode, 201);
+
+  const reset = await app.inject({ method: "POST", url: "/dev/reset-all-data" });
+  assert.equal(reset.statusCode, 200);
+  assert.deepEqual(reset.json(), { reset: true, seeded: true });
+
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availabilityBody = availability.json() as {
+    availability: Array<{ equipmentType: string; availableCount: number }>;
+  };
+  const twenty = availabilityBody.availability.find((item) => item.equipmentType === "20FT");
+  assert.ok(twenty);
+  assert.equal(twenty.availableCount, 3);
+
+  const containers = await app.inject({ method: "GET", url: "/containers" });
+  const containersBody = containers.json() as { containers: Array<{ containerNumber: string }> };
+  assert.equal(containersBody.containers.some((container) => container.containerNumber === "CONU9999999"), false);
+});
+
+test("POST /dev/reset-all-data is unavailable outside development mode", async () => {
+  const app = buildServer(new EquipmentsStore(true), undefined, false);
+  const response = await app.inject({ method: "POST", url: "/dev/reset-all-data" });
+
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(response.json(), { error: "not found" });
 });
 
 test("equipment type endpoints support list/create/update", async () => {

@@ -6,8 +6,13 @@ import { getPlaygroundScript, getPlaygroundStyle, renderApiPlayground } from "./
 import { EquipmentsStore } from "./store.js";
 
 const defaultRuntimeConfig: RuntimeConfig = { backend: StorageBackend.MEMORY, path: "" };
+const defaultDevMode = process.env.NODE_ENV !== "production";
 
-export function buildServer(store = new EquipmentsStore(), runtimeConfig: RuntimeConfig = defaultRuntimeConfig): FastifyInstance {
+export function buildServer(
+  store = new EquipmentsStore(),
+  runtimeConfig: RuntimeConfig = defaultRuntimeConfig,
+  devMode = defaultDevMode
+): FastifyInstance {
   const app = Fastify({ logger: false });
 
   app.setErrorHandler((error, _request, reply) => {
@@ -24,7 +29,7 @@ export function buildServer(store = new EquipmentsStore(), runtimeConfig: Runtim
   });
 
   app.get("/playground", async (_request, reply) => {
-    reply.type("text/html; charset=utf-8").send(renderApiPlayground(runtimeConfig));
+    reply.type("text/html; charset=utf-8").send(renderApiPlayground(runtimeConfig, devMode));
   });
 
   app.get("/playground/playground.css", async (_request, reply) => {
@@ -111,6 +116,15 @@ export function buildServer(store = new EquipmentsStore(), runtimeConfig: Runtim
   app.post("/events", async (request) => {
     const body = request.body as { eventType: string; payload: { bookingReference: string } };
     return store.consumeEvent(body.eventType, body.payload);
+  });
+
+  app.post("/dev/reset-all-data", async (_request, reply) => {
+    if (!devMode) {
+      reply.status(404).send({ error: "not found" });
+      return;
+    }
+
+    return store.resetAllData();
   });
 
   return app;

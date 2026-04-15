@@ -167,7 +167,14 @@ npm run dev
 Service starts on `http://0.0.0.0:3000` by default.
 
 Open `http://localhost:3000/playground` for a lightweight browser playground with
-preset requests, editable JSON bodies, and inline response output for manual API testing.
+preset requests, editable JSON bodies, inline response output for manual API testing,
+and a dev-only reset button that restores the seeded baseline state.
+
+The reset action is only exposed when `NODE_ENV` is not `production`:
+
+- `POST /dev/reset-all-data` resets in-memory or persisted runtime data back to the seeded baseline
+- the playground shows a `Reset All Data` button only in development mode
+- production mode returns `404` for the reset endpoint and hides the control from the playground
 
 ### Build and Test
 
@@ -194,6 +201,10 @@ npm test
 - `POST /containers/{id}/pickup`
 - `POST /containers/{id}/return`
 - `POST /events` (consumes `booking.cancelled` and `booking.completed`)
+
+### Dev-Only Utilities
+
+- `POST /dev/reset-all-data` - clears service state and restores the seeded baseline for local testing
 
 ### Runtime Storage Backends
 

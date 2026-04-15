@@ -15,16 +15,20 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-export function renderApiPlayground(config: RuntimeConfig): string {
+export function renderApiPlayground(config: RuntimeConfig, devMode: boolean): string {
   const backendLabel = escapeHtml(config.backend);
   const backendPath = config.path ? escapeHtml(config.path) : "";
   const backendDescription = config.path
     ? `Using ${backendLabel} persistence at <code>${backendPath}</code>.`
     : `Using ${backendLabel} persistence for this service instance.`;
+  const resetSection = devMode
+    ? '<div class="dev-tools"><button id="resetAllData" class="danger" type="button">Reset All Data</button><p class="dev-tools-copy">Dev-only action. Clears runtime state and restores the seeded baseline.</p></div>'
+    : '<div class="dev-tools is-disabled"><p class="dev-tools-copy">Reset controls are unavailable outside development mode.</p></div>';
 
   return playgroundHtmlTemplate
     .replaceAll("__BACKEND_LABEL__", backendLabel)
-    .replaceAll("__BACKEND_DESCRIPTION__", backendDescription);
+    .replaceAll("__BACKEND_DESCRIPTION__", backendDescription)
+    .replaceAll("__RESET_SECTION__", resetSection);
 }
 
 export function getPlaygroundStyle(): string {

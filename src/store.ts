@@ -23,8 +23,10 @@ export class EquipmentsStore {
   private reservations = new Map<string, Reservation>();
   private reservationByBooking = new Map<string, string>();
   private persistence: StorePersistence | null;
+  private readonly seedDefaults: boolean;
 
   constructor(seed = true, persistence: StorePersistence | null = null) {
+    this.seedDefaults = seed;
     this.persistence = persistence;
     const snapshot = this.persistence?.load();
     if (snapshot) {
@@ -32,10 +34,12 @@ export class EquipmentsStore {
       return;
     }
 
-    if (seed) {
-      this.seedData();
-      this.persist();
-    }
+    this.initializeState();
+  }
+
+  resetAllData(): { reset: true; seeded: boolean } {
+    this.initializeState();
+    return { reset: true, seeded: this.seedDefaults };
   }
 
   listEquipmentTypes(): EquipmentType[] {
@@ -350,6 +354,19 @@ export class EquipmentsStore {
     this.reservationByBooking = new Map(snapshot.reservations.map((reservation) => [reservation.bookingReference, reservation.id]));
   }
 
+  private initializeState(): void {
+    this.equipmentTypes = new Map();
+    this.containers = new Map();
+    this.reservations = new Map();
+    this.reservationByBooking = new Map();
+
+    if (this.seedDefaults) {
+      this.seedData();
+    }
+
+    this.persist();
+  }
+
   private persist(): void {
     this.persistence?.save({
       equipmentTypes: this.listEquipmentTypes(),
@@ -405,8 +422,19 @@ export class EquipmentsStore {
       { containerNumber: "CONU4000001", equipmentType: "40HC", currentDepot: "CNSHA-01" }
     ];
 
+    const now = new Date().toISOString();
     for (const container of seedContainers) {
-      this.registerContainer(container);
+      const id = randomUUID();
+      this.containers.set(id, {
+        id,
+        containerNumber: container.containerNumber,
+        equipmentType: container.equipmentType,
+        status: ContainerStatus.AVAILABLE,
+        currentDepot: container.currentDepot,
+        bookingReference: null,
+        lastMovedAt: now,
+        createdAt: now
+      });
     }
   }
 }
