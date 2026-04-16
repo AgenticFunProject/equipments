@@ -445,5 +445,5 @@ export class EquipmentsStore {
 }
 
 export function createStoreFromRuntimeConfig(config: RuntimeConfig, seed = true): EquipmentsStore {
-  return new EquipmentsStore(seed, createPersistence(config));
+  return new EquipmentsStore(seed && !config.sqliteEmptyOnFirstBoot, createPersistence(config));
 }

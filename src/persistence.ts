@@ -16,6 +16,7 @@ export type StorageBackend = (typeof StorageBackend)[keyof typeof StorageBackend
 export const STORAGE_BACKEND_ENV = "STORAGE_BACKEND";
 export const STORAGE_DB_PATH_ENV = "STORAGE_DB_PATH";
 export const STORAGE_SQLITE_PATH_ENV = "STORAGE_SQLITE_PATH";
+export const STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV = "STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT";
 
 export interface StoreSnapshot {
   equipmentTypes: EquipmentType[];
@@ -31,6 +32,7 @@ export interface StorePersistence {
 export interface RuntimeConfig {
   backend: StorageBackend;
   path: string;
+  sqliteEmptyOnFirstBoot?: boolean;
 }
 
 export function normalizeBackend(raw: string | undefined): StorageBackend {
@@ -56,7 +58,7 @@ export function normalizeBackend(raw: string | undefined): StorageBackend {
 export function loadRuntimeConfig(env = process.env): RuntimeConfig {
   const backend = normalizeBackend(env[STORAGE_BACKEND_ENV]);
   if (backend === StorageBackend.MEMORY) {
-    return { backend, path: "" };
+    return { backend, path: "", sqliteEmptyOnFirstBoot: false };
   }
 
   if (backend === StorageBackend.DB) {
@@ -64,7 +66,7 @@ export function loadRuntimeConfig(env = process.env): RuntimeConfig {
     if (!path) {
       throw new DomainError(`${STORAGE_DB_PATH_ENV} is required when ${STORAGE_BACKEND_ENV}=db`);
     }
-    return { backend, path };
+    return { backend, path, sqliteEmptyOnFirstBoot: false };
   }
 
   const path = env[STORAGE_SQLITE_PATH_ENV]?.trim() || env[STORAGE_DB_PATH_ENV]?.trim() || "";
@@ -74,7 +76,30 @@ export function loadRuntimeConfig(env = process.env): RuntimeConfig {
     );
   }
 
-  return { backend, path };
+  return {
+    backend,
+    path,
+    sqliteEmptyOnFirstBoot: parseBooleanFlag(env[STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV])
+  };
+}
+
+function parseBooleanFlag(raw: string | undefined): boolean {
+  switch (raw?.trim().toLowerCase()) {
+    case undefined:
+    case "":
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    default:
+      throw new DomainError(`unsupported boolean flag value ${JSON.stringify(raw)}`);
+  }
 }
 
 export function createPersistence(config: RuntimeConfig): StorePersistence {

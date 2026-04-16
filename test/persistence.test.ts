@@ -10,6 +10,7 @@ import {
   normalizeBackend,
   STORAGE_BACKEND_ENV,
   STORAGE_DB_PATH_ENV,
+  STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV,
   STORAGE_SQLITE_PATH_ENV,
   StorageBackend
 } from "../src/persistence.js";
@@ -23,7 +24,7 @@ test("normalizeBackend accepts sqlite aliases", () => {
 
 test("loadRuntimeConfig defaults to memory", () => {
   const config = loadRuntimeConfig({});
-  assert.deepEqual(config, { backend: StorageBackend.MEMORY, path: "" });
+  assert.deepEqual(config, { backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false });
 });
 
 test("loadRuntimeConfig requires db path", () => {
@@ -41,7 +42,22 @@ test("loadRuntimeConfig accepts sqlite fallback path", () => {
 
   assert.deepEqual(config, {
     backend: StorageBackend.SQLITE,
-    path: "/tmp/equipments.sqlite"
+    path: "/tmp/equipments.sqlite",
+    sqliteEmptyOnFirstBoot: false
+  });
+});
+
+test("loadRuntimeConfig enables empty sqlite first boot when requested", () => {
+  const config = loadRuntimeConfig({
+    [STORAGE_BACKEND_ENV]: StorageBackend.SQLITE,
+    [STORAGE_SQLITE_PATH_ENV]: "/tmp/equipments.sqlite",
+    [STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV]: "true"
+  });
+
+  assert.deepEqual(config, {
+    backend: StorageBackend.SQLITE,
+    path: "/tmp/equipments.sqlite",
+    sqliteEmptyOnFirstBoot: true
   });
 });
 
@@ -144,9 +160,40 @@ test("sqlite backend stores state in relational tables", () => {
   }
 });
 
+test("sqlite backend can start empty on first boot", () => {
+  const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-empty-"));
+  try {
+    const path = join(dir, "equipments.sqlite");
+    const storeA = createStoreFromRuntimeConfig(
+      { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true },
+      true
+    );
+    assert.deepEqual(storeA.listEquipmentTypes(), []);
+    assert.deepEqual(storeA.listContainers({}), []);
+
+    storeA.createEquipmentType({
+      code: "45HC",
+      description: "45-foot High Cube",
+      nominalLength: "45'",
+      maxPayloadKg: 29500
+    });
+
+    const storeB = createStoreFromRuntimeConfig(
+      { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true },
+      true
+    );
+    assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("memory backend does not persist across store recreation", () => {
-  const storeA = createStoreFromRuntimeConfig({ backend: StorageBackend.MEMORY, path: "" });
-  const storeB = createStoreFromRuntimeConfig({ backend: StorageBackend.MEMORY, path: "" }, false);
+  const storeA = createStoreFromRuntimeConfig({ backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false });
+  const storeB = createStoreFromRuntimeConfig(
+    { backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false },
+    false
+  );
 
   storeA.createEquipmentType({
     code: "53FT",

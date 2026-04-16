@@ -224,6 +224,7 @@ Environment variables:
 - `STORAGE_DB_PATH` is required when `STORAGE_BACKEND=db`
 - `STORAGE_SQLITE_PATH` is preferred when `STORAGE_BACKEND=sqlite`
 - `STORAGE_DB_PATH` is also accepted as a fallback for `sqlite`
+- `STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true` skips seeded baseline data when a SQLite database is created for the first time
 
 Examples:
 
@@ -236,4 +237,7 @@ STORAGE_BACKEND=db STORAGE_DB_PATH=.data/equipments.json npm run dev
 
 # SQLite persistence
 STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run dev
+
+# SQLite persistence without seeded baseline data on first boot
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true npm run dev
 ```

@@ -5,7 +5,7 @@ import { type RuntimeConfig, StorageBackend } from "./persistence.js";
 import { getPlaygroundScript, getPlaygroundStyle, renderApiPlayground } from "./playground.js";
 import { EquipmentsStore } from "./store.js";
 
-const defaultRuntimeConfig: RuntimeConfig = { backend: StorageBackend.MEMORY, path: "" };
+const defaultRuntimeConfig: RuntimeConfig = { backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false };
 const defaultDevMode = process.env.NODE_ENV !== "production";
 
 export function buildServer(
