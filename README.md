@@ -26,17 +26,19 @@ The catalogue is employee-manageable so new types can be added without code chan
 ## Container Unit Lifecycle
 
 ```
-AVAILABLE → RESERVED → DISPATCHED → IN_TRANSIT → RETURNED → AVAILABLE
-                ↓
-            RELEASED  (reservation cancelled before dispatch)
+AVAILABLE → RESERVED → DISPATCHED ──┬──→ RETURNED → AVAILABLE
+                ↓                   │
+            RELEASED                └──→ IN_TRANSIT → RETURNED → AVAILABLE
+      (reservation cancelled            (set today via manual status override)
+       before dispatch)
 ```
 
 | Status | Meaning |
 |--------|---------|
 | AVAILABLE | In depot, ready to be booked |
 | RESERVED | Allocated to a confirmed booking, awaiting pickup |
-| DISPATCHED | Picked up by customer at origin |
-| IN_TRANSIT | On the vessel |
+| DISPATCHED | Picked up by customer at origin; this is the last status reached by the standard pickup flow |
+| IN_TRANSIT | On the vessel; today this is reached through the manual status override endpoint rather than a dedicated public transition |
 | RETURNED | Delivered and back at destination depot |
 | RELEASED | Reservation cancelled; returns to AVAILABLE |
 
@@ -55,7 +57,7 @@ AVAILABLE → RESERVED → DISPATCHED → IN_TRANSIT → RETURNED → AVAILABLE
 | POST | /containers | Register a new container unit |
 | GET | /containers | List containers (filterable by type/status/depot) |
 | GET | /containers/{id} | Get a specific container |
-| PATCH | /containers/{id}/status | Manual status override (ops use) |
+| PATCH | /containers/{id}/status | Manual status override (ops use); currently the supported way to mark a dispatched container as `IN_TRANSIT` |
 
 ### Inventory / Availability — Public/Service
 | Method | Path | Description |
@@ -128,6 +130,7 @@ AVAILABLE → RESERVED → DISPATCHED → IN_TRANSIT → RETURNED → AVAILABLE
 - Reservations are created atomically — either all requested units are reserved or the request fails
 - Released reservations (cancelled bookings) return containers to AVAILABLE immediately
 - Container pickup can only be recorded when status is RESERVED
+- There is no dedicated API transition from DISPATCHED to IN_TRANSIT; operations use `PATCH /containers/{id}/status` when they need to reflect vessel departure
 - Container return can only be recorded when status is IN_TRANSIT or DISPATCHED
 
 ## Events Consumed
