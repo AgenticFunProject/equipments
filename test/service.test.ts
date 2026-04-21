@@ -396,7 +396,15 @@ test("pickup and return enforce business lifecycle rules", async () => {
 
   const back = await app.inject({ method: "POST", url: `/containers/${containerId}/return` });
   assert.equal(back.statusCode, 200);
-  assert.equal((back.json() as { status: string }).status, "RETURNED");
+  assert.equal((back.json() as { status: string }).status, "AVAILABLE");
+
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const body = availability.json() as {
+    availability: Array<{ equipmentType: string; availableCount: number }>;
+  };
+  const twenty = body.availability.find((item) => item.equipmentType === "20FT");
+  assert.ok(twenty);
+  assert.equal(twenty.availableCount, 3);
 
   const invalidPickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup` });
   assert.equal(invalidPickup.statusCode, 409);
@@ -496,7 +504,15 @@ test("booking.completed event returns dispatched containers", async () => {
   assert.deepEqual(completeEvent.json(), { processed: true });
 
   const container = await app.inject({ method: "GET", url: `/containers/${containerId}` });
-  assert.equal((container.json() as { status: string }).status, "RETURNED");
+  assert.equal((container.json() as { status: string }).status, "AVAILABLE");
+
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availabilityBody = availability.json() as {
+    availability: Array<{ equipmentType: string; availableCount: number }>;
+  };
+  const twenty = availabilityBody.availability.find((item) => item.equipmentType === "20FT");
+  assert.ok(twenty);
+  assert.equal(twenty.availableCount, 3);
 
   const unknownBooking = await app.inject({
     method: "POST",
