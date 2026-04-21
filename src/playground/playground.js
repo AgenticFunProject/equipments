@@ -6,12 +6,18 @@ const presets = {
     path: "/equipment-types",
     body: JSON.stringify({ code: "45HC", description: "45-foot High Cube", nominalLength: "45'", maxPayloadKg: 29500 }, null, 2)
   },
+  updateType: {
+    method: "PUT",
+    path: "/equipment-types/45HC",
+    body: JSON.stringify({ description: "45-foot High Cube Updated", nominalLength: "45'", maxPayloadKg: 29750 }, null, 2)
+  },
   registerContainer: {
     method: "POST",
     path: "/containers",
     body: JSON.stringify({ containerNumber: "MSKU1234567", equipmentType: "20FT", currentDepot: "NLRTM-01" }, null, 2)
   },
   listContainers: { method: "GET", path: "/containers?status=AVAILABLE", body: "" },
+  getContainer: { method: "GET", path: "/containers/{id}", body: "" },
   overrideStatus: {
     method: "PATCH",
     path: "/containers/{id}/status",

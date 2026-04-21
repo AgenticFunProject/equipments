@@ -33,6 +33,8 @@ test("GET /playground serves the HTML playground", async () => {
   assert.match(response.headers["content-type"] ?? "", /^text\/html/);
   assert.match(response.body, /Equipments API Playground/);
   assert.match(response.body, /Create Reservation/);
+  assert.match(response.body, /Update Equipment Type/);
+  assert.match(response.body, /Get Container/);
   assert.match(response.body, /Active Backend/);
   assert.match(response.body, /memory/);
   assert.match(response.body, /\/playground\/playground\.css/);
@@ -80,6 +82,8 @@ test("GET /playground/playground.js serves the client script", async () => {
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"] ?? "", /^text\/javascript/);
   assert.match(response.body, /const presets =/);
+  assert.match(response.body, /updateType:/);
+  assert.match(response.body, /getContainer:/);
   assert.match(response.body, /function resetResponseOutput\(/);
   assert.match(response.body, /function runDevDataAction\(/);
   assert.match(response.body, /function resetAllData\(/);

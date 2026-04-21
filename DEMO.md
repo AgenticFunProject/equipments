@@ -282,3 +282,8 @@ http://localhost:3000/playground
 ```
 
 The playground is useful for copying the JSON bodies in this file and pasting returned IDs into later requests.
+
+## Automated Gherkin Coverage
+
+The same walkthrough is also encoded as an executable feature file at `test/features/demo.feature`.
+It is exercised automatically by `test/gherkin-demo.test.ts`, so running `npm test` verifies that the documented demo flow still works end to end.
