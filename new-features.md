@@ -6,9 +6,10 @@ The goal is to make the service feel more useful inside a larger ecosystem while
 ## Priority Order
 
 1. User-based API calls with tokens
-2. Smart substitution suggestions
-3. Equipment availability forecast
-4. Customer priority and allocation rules
+2. Audit logging for authenticated actions
+3. Smart substitution suggestions
+4. Equipment availability forecast
+5. Customer priority and allocation rules
 
 ## 1. User-Based API Calls With Tokens
 
@@ -84,7 +85,43 @@ This can later grow into:
 - user-specific audit logs
 - customer-specific booking policies
 
-## 2. Smart Substitution Suggestions
+## 2. Audit Logging For Authenticated Actions
+
+Once API calls carry caller identity, the service should record audit events for sensitive operations.
+
+### Proposed Approach
+
+- record audit events for authenticated write operations
+- capture actor identity from bearer token claims such as `sub`
+- store enough context to explain who changed what and when
+- keep read-only traffic out of the first version unless explicitly needed
+
+### Suggested Audit Fields
+
+- `actor`: caller identity from the token
+- `action`: operation performed
+- `resourceType`: what kind of object changed
+- `resourceId`: which object changed
+- `timestamp`: when the action happened
+- `requestContext`: selected request details such as depot, booking reference, or equipment type
+- `outcome`: success or failure
+
+### Suggested First Audit Scope
+
+- equipment type create and update
+- container registration
+- container status override
+- reservation creation
+- reservation release
+- future substitution and allocation policy updates
+
+### Why This Helps
+
+- gives clients traceability for operational changes
+- makes token-based identity more useful
+- prepares the service for stronger governance later
+
+## 3. Smart Substitution Suggestions
 
 When the requested equipment type is unavailable, the service should suggest allowed substitutes instead of only returning a hard failure.
 
@@ -133,7 +170,7 @@ When the requested equipment type is unavailable, the service should suggest all
 - helps booking recovery
 - makes the service feel more operationally smart
 
-## 3. Equipment Availability Forecast
+## 4. Equipment Availability Forecast
 
 The service should expose projected availability by depot and date, not only current stock.
 
@@ -176,7 +213,7 @@ The service should expose projected availability by depot and date, not only cur
 - helps clients decide where and when to book
 - moves the service from inventory lookup toward operational planning
 
-## 4. Customer Priority And Allocation Rules
+## 5. Customer Priority And Allocation Rules
 
 The service should support strategic allocation of scarce equipment based on customer tier or booking priority.
 
@@ -242,24 +279,29 @@ To keep scope controlled, implement these in stages.
 
 ### Stage 2
 
-- substitution table
-- alternative suggestions in reservation failures
+- audit logging for authenticated write actions
 
 ### Stage 3
 
-- forecast endpoint
+- substitution table
+- alternative suggestions in reservation failures
 
 ### Stage 4
+
+- forecast endpoint
+
+### Stage 5
 
 - allocation policies based on customer or booking priority
 
 ## Summary
 
-These four features work well together:
+These five features work well together:
 
 - token-based authorization makes the service ecosystem-ready
+- audit logs make caller actions traceable
 - substitutions improve booking recovery
 - forecasting improves planning
 - allocation rules improve strategic inventory management
 
-The most important first move is token-based user/service authorization, because it provides the foundation for the rest.
+The most important first move is token-based user/service authorization, because it provides the foundation for the rest. Audit logging is the next most natural step once caller identity is available.
