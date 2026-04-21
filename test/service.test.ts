@@ -842,6 +842,20 @@ test("DELETE /reservations rejects release after pickup", async () => {
   assert.equal(release.statusCode, 409);
   assert.match((release.json() as { error: string }).error, /cannot be released after dispatch/);
 
+  const cancelledEvent = await app.inject({
+    method: "POST",
+    url: "/events",
+    headers: authHeader([Scope.MODIFY]),
+    payload: {
+      eventType: "booking.cancelled",
+      payload: {
+        bookingReference: "BKG-DELETE-2"
+      }
+    }
+  });
+  assert.equal(cancelledEvent.statusCode, 409);
+  assert.match((cancelledEvent.json() as { error: string }).error, /cannot be released after dispatch/);
+
   const container = await app.inject({ method: "GET", url: `/containers/${containerId}`, headers: authHeader([Scope.READ]) });
   assert.equal(container.statusCode, 200);
   assert.equal((container.json() as { status: string }).status, "DISPATCHED");
