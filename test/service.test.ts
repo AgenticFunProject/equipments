@@ -464,6 +464,39 @@ test("DELETE /reservations releases reservation by booking reference", async () 
   assert.equal(missing.statusCode, 404);
 });
 
+test("DELETE /reservations rejects release after pickup", async () => {
+  const app = createApp();
+
+  const reserve = await app.inject({
+    method: "POST",
+    url: "/reservations",
+    payload: {
+      bookingReference: "BKG-DELETE-2",
+      originDepot: "CNSHA-01",
+      equipment: [{ type: "20FT", quantity: 1 }]
+    }
+  });
+  assert.equal(reserve.statusCode, 201);
+
+  const containerId = (reserve.json() as { assignedContainers: Array<{ containerId: string }> }).assignedContainers[0].containerId;
+  const pickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup` });
+  assert.equal(pickup.statusCode, 200);
+
+  const release = await app.inject({ method: "DELETE", url: "/reservations/BKG-DELETE-2" });
+  assert.equal(release.statusCode, 409);
+  assert.match((release.json() as { error: string }).error, /cannot be released after dispatch/);
+
+  const container = await app.inject({ method: "GET", url: `/containers/${containerId}` });
+  assert.equal(container.statusCode, 200);
+  assert.equal((container.json() as { status: string }).status, "DISPATCHED");
+
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const body = availability.json() as { availability: Array<{ equipmentType: string; availableCount: number }> };
+  const twenty = body.availability.find((item) => item.equipmentType === "20FT");
+  assert.ok(twenty);
+  assert.equal(twenty.availableCount, 2);
+});
+
 test("booking.completed event returns dispatched containers", async () => {
   const app = createApp();
 
