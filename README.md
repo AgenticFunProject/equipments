@@ -187,6 +187,8 @@ npm run build
 npm test
 ```
 
+For a full API walkthrough that starts from an empty database and creates all demo data through the service, see `DEMO.md`.
+
 ### Implemented Endpoints
 
 - `GET /health`
