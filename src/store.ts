@@ -273,6 +273,16 @@ export class EquipmentsStore {
 
     for (const containerId of reservation.containers) {
       const container = this.getContainer(containerId);
+      if (container.status !== ContainerStatus.RESERVED) {
+        throw new DomainError(
+          `reservation for booking ${bookingReference} cannot be released after dispatch`,
+          409
+        );
+      }
+    }
+
+    for (const containerId of reservation.containers) {
+      const container = this.getContainer(containerId);
       if (container.status === ContainerStatus.RESERVED) {
         container.status = ContainerStatus.AVAILABLE;
         container.bookingReference = null;
