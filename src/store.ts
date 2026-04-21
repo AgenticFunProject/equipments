@@ -301,7 +301,8 @@ export class EquipmentsStore {
     if (container.status !== ContainerStatus.DISPATCHED && container.status !== ContainerStatus.IN_TRANSIT) {
       throw new DomainError("return allowed only when status is DISPATCHED or IN_TRANSIT", 409);
     }
-    container.status = ContainerStatus.RETURNED;
+    container.status = ContainerStatus.AVAILABLE;
+    container.bookingReference = null;
     container.lastMovedAt = new Date().toISOString();
     this.persist();
     return container;
