@@ -1,13 +1,36 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 
+import { type BearerAuthConfig, loadBearerAuthConfig, Scope } from "../src/auth.js";
 import { StorageBackend } from "../src/persistence.js";
 import { buildServer } from "../src/server.js";
 import { EquipmentsStore } from "../src/store.js";
 
+const authConfig = loadBearerAuthConfig({});
+
 function createApp() {
   const store = new EquipmentsStore(true);
-  return buildServer(store);
+  return buildServer(store, undefined, undefined, authConfig);
+}
+
+function authHeader(scopes: string[] = [Scope.READ, Scope.MODIFY], overrides: Partial<{ sub: string; iss: string; aud: string | string[]; exp: number; scope: string }> = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    sub: overrides.sub ?? "test-client",
+    iss: overrides.iss ?? authConfig.issuer,
+    aud: overrides.aud ?? authConfig.audience,
+    exp: overrides.exp ?? now + 3600,
+    scope: overrides.scope ?? scopes.join(" ")
+  };
+  const header = { alg: "HS256", typ: "JWT" };
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", authConfig.secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest("base64url");
+
+  return { authorization: `Bearer ${encodedHeader}.${encodedPayload}.${signature}` };
 }
 
 test("GET /health returns ok", async () => {
@@ -17,9 +40,34 @@ test("GET /health returns ok", async () => {
   assert.deepEqual(response.json(), { status: "ok" });
 });
 
+test("GET /equipment-types requires a bearer token", async () => {
+  const app = createApp();
+  const response = await app.inject({ method: "GET", url: "/equipment-types" });
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json(), { error: "missing bearer token" });
+});
+
+test("write routes reject read-only tokens", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/containers",
+    headers: authHeader([Scope.READ]),
+    payload: {
+      containerNumber: "CONU1111111",
+      equipmentType: "20FT",
+      currentDepot: "CNSHA-01"
+    }
+  });
+
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(response.json(), { error: `missing required scope ${Scope.MODIFY}` });
+});
+
 test("GET / redirects to the API playground", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/" });
+  const response = await app.inject({ method: "GET", url: "/", headers: authHeader([Scope.READ]) });
 
   assert.equal(response.statusCode, 302);
   assert.equal(response.headers.location, "/playground");
@@ -27,7 +75,7 @@ test("GET / redirects to the API playground", async () => {
 
 test("GET /playground serves the HTML playground", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/playground" });
+  const response = await app.inject({ method: "GET", url: "/playground", headers: authHeader([Scope.READ]) });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"] ?? "", /^text\/html/);
@@ -48,8 +96,8 @@ test("GET /playground shows configured backend path when present", async () => {
   const app = buildServer(new EquipmentsStore(true), {
     backend: StorageBackend.SQLITE,
     path: "/tmp/equipments.sqlite"
-  });
-  const response = await app.inject({ method: "GET", url: "/playground" });
+  }, undefined, authConfig);
+  const response = await app.inject({ method: "GET", url: "/playground", headers: authHeader([Scope.READ]) });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.body, /sqlite/);
@@ -57,8 +105,8 @@ test("GET /playground shows configured backend path when present", async () => {
 });
 
 test("GET /playground hides reset controls outside development mode", async () => {
-  const app = buildServer(new EquipmentsStore(true), undefined, false);
-  const response = await app.inject({ method: "GET", url: "/playground" });
+  const app = buildServer(new EquipmentsStore(true), undefined, false, authConfig);
+  const response = await app.inject({ method: "GET", url: "/playground", headers: authHeader([Scope.READ]) });
 
   assert.equal(response.statusCode, 200);
   assert.doesNotMatch(response.body, /Reset All Data/);
@@ -68,7 +116,7 @@ test("GET /playground hides reset controls outside development mode", async () =
 
 test("GET /playground/playground.css serves the stylesheet", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/playground/playground.css" });
+  const response = await app.inject({ method: "GET", url: "/playground/playground.css", headers: authHeader([Scope.READ]) });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"] ?? "", /^text\/css/);
@@ -77,7 +125,7 @@ test("GET /playground/playground.css serves the stylesheet", async () => {
 
 test("GET /playground/playground.js serves the client script", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/playground/playground.js" });
+  const response = await app.inject({ method: "GET", url: "/playground/playground.js", headers: authHeader([Scope.READ]) });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"] ?? "", /^text\/javascript/);
@@ -94,10 +142,12 @@ test("GET /playground/playground.js serves the client script", async () => {
 
 test("POST /dev/reset-all-data resets state in development mode", async () => {
   const app = createApp();
+  const headers = authHeader([Scope.MODIFY]);
 
   const created = await app.inject({
     method: "POST",
     url: "/containers",
+    headers,
     payload: {
       containerNumber: "CONU9999999",
       equipmentType: "20FT",
@@ -109,6 +159,7 @@ test("POST /dev/reset-all-data resets state in development mode", async () => {
   const reserve = await app.inject({
     method: "POST",
     url: "/reservations",
+    headers,
     payload: {
       bookingReference: "BKG-RESET-1",
       originDepot: "CNSHA-01",
@@ -117,11 +168,11 @@ test("POST /dev/reset-all-data resets state in development mode", async () => {
   });
   assert.equal(reserve.statusCode, 201);
 
-  const reset = await app.inject({ method: "POST", url: "/dev/reset-all-data" });
+  const reset = await app.inject({ method: "POST", url: "/dev/reset-all-data", headers });
   assert.equal(reset.statusCode, 200);
   assert.deepEqual(reset.json(), { reset: true, seeded: true });
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   const availabilityBody = availability.json() as {
     availability: Array<{ equipmentType: string; availableCount: number }>;
   };
@@ -129,39 +180,40 @@ test("POST /dev/reset-all-data resets state in development mode", async () => {
   assert.ok(twenty);
   assert.equal(twenty.availableCount, 3);
 
-  const containers = await app.inject({ method: "GET", url: "/containers" });
+  const containers = await app.inject({ method: "GET", url: "/containers", headers: authHeader([Scope.READ]) });
   const containersBody = containers.json() as { containers: Array<{ containerNumber: string }> };
   assert.equal(containersBody.containers.some((container) => container.containerNumber === "CONU9999999"), false);
 });
 
 test("POST /dev/clear-all-data clears state to empty in development mode", async () => {
   const app = createApp();
+  const modifyHeaders = authHeader([Scope.MODIFY]);
 
-  const clear = await app.inject({ method: "POST", url: "/dev/clear-all-data" });
+  const clear = await app.inject({ method: "POST", url: "/dev/clear-all-data", headers: modifyHeaders });
   assert.equal(clear.statusCode, 200);
   assert.deepEqual(clear.json(), { reset: true, seeded: false });
 
-  const types = await app.inject({ method: "GET", url: "/equipment-types" });
+  const types = await app.inject({ method: "GET", url: "/equipment-types", headers: authHeader([Scope.READ]) });
   assert.deepEqual(types.json(), { equipmentTypes: [] });
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   assert.deepEqual(availability.json(), { availability: [] });
 
-  const containers = await app.inject({ method: "GET", url: "/containers" });
+  const containers = await app.inject({ method: "GET", url: "/containers", headers: authHeader([Scope.READ]) });
   assert.deepEqual(containers.json(), { containers: [] });
 });
 
 test("POST /dev/reset-all-data is unavailable outside development mode", async () => {
-  const app = buildServer(new EquipmentsStore(true), undefined, false);
-  const response = await app.inject({ method: "POST", url: "/dev/reset-all-data" });
+  const app = buildServer(new EquipmentsStore(true), undefined, false, authConfig);
+  const response = await app.inject({ method: "POST", url: "/dev/reset-all-data", headers: authHeader([Scope.MODIFY]) });
 
   assert.equal(response.statusCode, 404);
   assert.deepEqual(response.json(), { error: "not found" });
 });
 
 test("POST /dev/clear-all-data is unavailable outside development mode", async () => {
-  const app = buildServer(new EquipmentsStore(true), undefined, false);
-  const response = await app.inject({ method: "POST", url: "/dev/clear-all-data" });
+  const app = buildServer(new EquipmentsStore(true), undefined, false, authConfig);
+  const response = await app.inject({ method: "POST", url: "/dev/clear-all-data", headers: authHeader([Scope.MODIFY]) });
 
   assert.equal(response.statusCode, 404);
   assert.deepEqual(response.json(), { error: "not found" });
@@ -169,8 +221,10 @@ test("POST /dev/clear-all-data is unavailable outside development mode", async (
 
 test("equipment type endpoints support list/create/update", async () => {
   const app = createApp();
+  const readHeaders = authHeader([Scope.READ]);
+  const modifyHeaders = authHeader([Scope.MODIFY]);
 
-  const before = await app.inject({ method: "GET", url: "/equipment-types" });
+  const before = await app.inject({ method: "GET", url: "/equipment-types", headers: readHeaders });
   assert.equal(before.statusCode, 200);
   const beforeBody = before.json() as { equipmentTypes: Array<{ code: string }> };
   assert.equal(beforeBody.equipmentTypes.length, 5);
@@ -178,6 +232,7 @@ test("equipment type endpoints support list/create/update", async () => {
   const create = await app.inject({
     method: "POST",
     url: "/equipment-types",
+    headers: modifyHeaders,
     payload: {
       code: "45HC",
       description: "45-foot High Cube",
@@ -191,6 +246,7 @@ test("equipment type endpoints support list/create/update", async () => {
   const update = await app.inject({
     method: "PUT",
     url: "/equipment-types/45hc",
+    headers: modifyHeaders,
     payload: {
       description: "45-foot High Cube Updated"
     }
@@ -198,7 +254,7 @@ test("equipment type endpoints support list/create/update", async () => {
   assert.equal(update.statusCode, 200);
   assert.equal((update.json() as { description: string }).description, "45-foot High Cube Updated");
 
-  const after = await app.inject({ method: "GET", url: "/equipment-types" });
+  const after = await app.inject({ method: "GET", url: "/equipment-types", headers: readHeaders });
   const afterBody = after.json() as { equipmentTypes: Array<{ code: string }> };
   assert.equal(afterBody.equipmentTypes.length, 6);
   assert.ok(afterBody.equipmentTypes.some((item) => item.code === "45HC"));
@@ -206,10 +262,12 @@ test("equipment type endpoints support list/create/update", async () => {
 
 test("equipment type endpoints return expected errors", async () => {
   const app = createApp();
+  const modifyHeaders = authHeader([Scope.MODIFY]);
 
   const duplicate = await app.inject({
     method: "POST",
     url: "/equipment-types",
+    headers: modifyHeaders,
     payload: {
       code: "20FT",
       description: "Duplicate",
@@ -222,6 +280,7 @@ test("equipment type endpoints return expected errors", async () => {
   const missing = await app.inject({
     method: "PUT",
     url: "/equipment-types/DOES-NOT-EXIST",
+    headers: modifyHeaders,
     payload: {
       description: "nope"
     }
@@ -231,10 +290,13 @@ test("equipment type endpoints return expected errors", async () => {
 
 test("container endpoints support register/list/get/override status", async () => {
   const app = createApp();
+  const readHeaders = authHeader([Scope.READ]);
+  const modifyHeaders = authHeader([Scope.MODIFY]);
 
   const created = await app.inject({
     method: "POST",
     url: "/containers",
+    headers: modifyHeaders,
     payload: {
       containerNumber: "CONU8888888",
       equipmentType: "20FT",
@@ -246,18 +308,19 @@ test("container endpoints support register/list/get/override status", async () =
   assert.equal(createdBody.status, "AVAILABLE");
   assert.equal(createdBody.currentDepot, "NLRTM-01");
 
-  const listed = await app.inject({ method: "GET", url: "/containers?type=20FT&status=AVAILABLE&depot=NLRTM-01" });
+  const listed = await app.inject({ method: "GET", url: "/containers?type=20FT&status=AVAILABLE&depot=NLRTM-01", headers: readHeaders });
   assert.equal(listed.statusCode, 200);
   const listedBody = listed.json() as { containers: Array<{ id: string }> };
   assert.ok(listedBody.containers.some((container) => container.id === createdBody.id));
 
-  const fetched = await app.inject({ method: "GET", url: `/containers/${createdBody.id}` });
+  const fetched = await app.inject({ method: "GET", url: `/containers/${createdBody.id}`, headers: readHeaders });
   assert.equal(fetched.statusCode, 200);
   assert.equal((fetched.json() as { id: string }).id, createdBody.id);
 
   const override = await app.inject({
     method: "PATCH",
     url: `/containers/${createdBody.id}/status`,
+    headers: modifyHeaders,
     payload: {
       status: "DISPATCHED"
     }
@@ -268,10 +331,12 @@ test("container endpoints support register/list/get/override status", async () =
 
 test("container endpoints return expected errors", async () => {
   const app = createApp();
+  const modifyHeaders = authHeader([Scope.MODIFY]);
 
   const unknownType = await app.inject({
     method: "POST",
     url: "/containers",
+    headers: modifyHeaders,
     payload: {
       containerNumber: "CONU7777777",
       equipmentType: "NOPE",
@@ -280,12 +345,13 @@ test("container endpoints return expected errors", async () => {
   });
   assert.equal(unknownType.statusCode, 400);
 
-  const missing = await app.inject({ method: "GET", url: "/containers/not-a-real-id" });
+  const missing = await app.inject({ method: "GET", url: "/containers/not-a-real-id", headers: authHeader([Scope.READ]) });
   assert.equal(missing.statusCode, 404);
 
   const invalidStatus = await app.inject({
     method: "PATCH",
     url: "/containers/not-a-real-id/status",
+    headers: modifyHeaders,
     payload: {
       status: "BROKEN"
     }
@@ -295,6 +361,7 @@ test("container endpoints return expected errors", async () => {
   const created = await app.inject({
     method: "POST",
     url: "/containers",
+    headers: modifyHeaders,
     payload: {
       containerNumber: "CONU5555555",
       equipmentType: "20FT",
@@ -305,6 +372,7 @@ test("container endpoints return expected errors", async () => {
   const invalidStatusOnExisting = await app.inject({
     method: "PATCH",
     url: `/containers/${createdBody.id}/status`,
+    headers: modifyHeaders,
     payload: {
       status: "BROKEN"
     }
@@ -314,7 +382,7 @@ test("container endpoints return expected errors", async () => {
 
 test("GET /availability returns seeded counts", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const response = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   assert.equal(response.statusCode, 200);
 
   const body = response.json() as {
@@ -332,6 +400,7 @@ test("POST /reservations reserves containers atomically", async () => {
   const reserve = await app.inject({
     method: "POST",
     url: "/reservations",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       bookingReference: "BKG-2026-00042",
       originDepot: "CNSHA-01",
@@ -343,7 +412,7 @@ test("POST /reservations reserves containers atomically", async () => {
   const body = reserve.json() as { assignedContainers: Array<{ containerId: string }> };
   assert.equal(body.assignedContainers.length, 2);
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   const afterBody = availability.json() as {
     availability: Array<{ equipmentType: string; availableCount: number }>;
   };
@@ -358,6 +427,7 @@ test("reservation creation fails when stock insufficient and leaves inventory un
   const failed = await app.inject({
     method: "POST",
     url: "/reservations",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       bookingReference: "BKG-OVER-ASK",
       originDepot: "CNSHA-01",
@@ -367,7 +437,7 @@ test("reservation creation fails when stock insufficient and leaves inventory un
 
   assert.equal(failed.statusCode, 409);
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   const body = availability.json() as {
     availability: Array<{ equipmentType: string; availableCount: number }>;
   };
@@ -378,10 +448,12 @@ test("reservation creation fails when stock insufficient and leaves inventory un
 
 test("pickup and return enforce business lifecycle rules", async () => {
   const app = createApp();
+  const modifyHeaders = authHeader([Scope.MODIFY]);
 
   const reserve = await app.inject({
     method: "POST",
     url: "/reservations",
+    headers: modifyHeaders,
     payload: {
       bookingReference: "BKG-LC-1",
       originDepot: "CNSHA-01",
@@ -394,15 +466,15 @@ test("pickup and return enforce business lifecycle rules", async () => {
   };
   const containerId = reserved.assignedContainers[0].containerId;
 
-  const pickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup` });
+  const pickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup`, headers: modifyHeaders });
   assert.equal(pickup.statusCode, 200);
   assert.equal((pickup.json() as { status: string }).status, "DISPATCHED");
 
-  const back = await app.inject({ method: "POST", url: `/containers/${containerId}/return` });
+  const back = await app.inject({ method: "POST", url: `/containers/${containerId}/return`, headers: modifyHeaders });
   assert.equal(back.statusCode, 200);
   assert.equal((back.json() as { status: string }).status, "AVAILABLE");
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   const body = availability.json() as {
     availability: Array<{ equipmentType: string; availableCount: number }>;
   };
@@ -410,7 +482,7 @@ test("pickup and return enforce business lifecycle rules", async () => {
   assert.ok(twenty);
   assert.equal(twenty.availableCount, 3);
 
-  const invalidPickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup` });
+  const invalidPickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup`, headers: modifyHeaders });
   assert.equal(invalidPickup.statusCode, 409);
 });
 
@@ -419,6 +491,7 @@ test("booking.cancelled event releases reserved containers", async () => {
   const reservation = await app.inject({
     method: "POST",
     url: "/reservations",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       bookingReference: "BKG-CANCEL-1",
       originDepot: "CNSHA-01",
@@ -430,6 +503,7 @@ test("booking.cancelled event releases reserved containers", async () => {
   const releaseEvent = await app.inject({
     method: "POST",
     url: "/events",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       eventType: "booking.cancelled",
       payload: {
@@ -439,7 +513,7 @@ test("booking.cancelled event releases reserved containers", async () => {
   });
   assert.equal(releaseEvent.statusCode, 200);
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   const body = availability.json() as {
     availability: Array<{ equipmentType: string; availableCount: number }>;
   };
@@ -454,6 +528,7 @@ test("DELETE /reservations releases reservation by booking reference", async () 
   const reserve = await app.inject({
     method: "POST",
     url: "/reservations",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       bookingReference: "BKG-DELETE-1",
       originDepot: "CNSHA-01",
@@ -462,17 +537,17 @@ test("DELETE /reservations releases reservation by booking reference", async () 
   });
   assert.equal(reserve.statusCode, 201);
 
-  const release = await app.inject({ method: "DELETE", url: "/reservations/BKG-DELETE-1" });
+  const release = await app.inject({ method: "DELETE", url: "/reservations/BKG-DELETE-1", headers: authHeader([Scope.MODIFY]) });
   assert.equal(release.statusCode, 200);
   assert.equal((release.json() as { status: string }).status, "RELEASED");
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   const body = availability.json() as { availability: Array<{ equipmentType: string; availableCount: number }> };
   const forty = body.availability.find((item) => item.equipmentType === "40FT");
   assert.ok(forty);
   assert.equal(forty.availableCount, 2);
 
-  const missing = await app.inject({ method: "DELETE", url: "/reservations/NO-SUCH-BOOKING" });
+  const missing = await app.inject({ method: "DELETE", url: "/reservations/NO-SUCH-BOOKING", headers: authHeader([Scope.MODIFY]) });
   assert.equal(missing.statusCode, 404);
 });
 
@@ -482,6 +557,7 @@ test("DELETE /reservations rejects release after pickup", async () => {
   const reserve = await app.inject({
     method: "POST",
     url: "/reservations",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       bookingReference: "BKG-DELETE-2",
       originDepot: "CNSHA-01",
@@ -491,18 +567,18 @@ test("DELETE /reservations rejects release after pickup", async () => {
   assert.equal(reserve.statusCode, 201);
 
   const containerId = (reserve.json() as { assignedContainers: Array<{ containerId: string }> }).assignedContainers[0].containerId;
-  const pickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup` });
+  const pickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup`, headers: authHeader([Scope.MODIFY]) });
   assert.equal(pickup.statusCode, 200);
 
-  const release = await app.inject({ method: "DELETE", url: "/reservations/BKG-DELETE-2" });
+  const release = await app.inject({ method: "DELETE", url: "/reservations/BKG-DELETE-2", headers: authHeader([Scope.MODIFY]) });
   assert.equal(release.statusCode, 409);
   assert.match((release.json() as { error: string }).error, /cannot be released after dispatch/);
 
-  const container = await app.inject({ method: "GET", url: `/containers/${containerId}` });
+  const container = await app.inject({ method: "GET", url: `/containers/${containerId}`, headers: authHeader([Scope.READ]) });
   assert.equal(container.statusCode, 200);
   assert.equal((container.json() as { status: string }).status, "DISPATCHED");
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   const body = availability.json() as { availability: Array<{ equipmentType: string; availableCount: number }> };
   const twenty = body.availability.find((item) => item.equipmentType === "20FT");
   assert.ok(twenty);
@@ -515,6 +591,7 @@ test("booking.completed event returns dispatched containers", async () => {
   const reserve = await app.inject({
     method: "POST",
     url: "/reservations",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       bookingReference: "BKG-COMPLETE-1",
       originDepot: "CNSHA-01",
@@ -524,12 +601,13 @@ test("booking.completed event returns dispatched containers", async () => {
   assert.equal(reserve.statusCode, 201);
 
   const containerId = (reserve.json() as { assignedContainers: Array<{ containerId: string }> }).assignedContainers[0].containerId;
-  const pickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup` });
+  const pickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup`, headers: authHeader([Scope.MODIFY]) });
   assert.equal(pickup.statusCode, 200);
 
   const completeEvent = await app.inject({
     method: "POST",
     url: "/events",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       eventType: "booking.completed",
       payload: {
@@ -540,10 +618,10 @@ test("booking.completed event returns dispatched containers", async () => {
   assert.equal(completeEvent.statusCode, 200);
   assert.deepEqual(completeEvent.json(), { processed: true });
 
-  const container = await app.inject({ method: "GET", url: `/containers/${containerId}` });
+  const container = await app.inject({ method: "GET", url: `/containers/${containerId}`, headers: authHeader([Scope.READ]) });
   assert.equal((container.json() as { status: string }).status, "AVAILABLE");
 
-  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01" });
+  const availability = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
   const availabilityBody = availability.json() as {
     availability: Array<{ equipmentType: string; availableCount: number }>;
   };
@@ -554,6 +632,7 @@ test("booking.completed event returns dispatched containers", async () => {
   const unknownBooking = await app.inject({
     method: "POST",
     url: "/events",
+    headers: authHeader([Scope.MODIFY]),
     payload: {
       eventType: "booking.completed",
       payload: {

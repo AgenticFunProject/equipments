@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 
+import { authenticateBearerToken, type AuthenticatedCaller, type BearerAuthConfig, ensureScope, loadBearerAuthConfig, Scope } from "./auth.js";
 import { DomainError } from "./errors.js";
 import { type RuntimeConfig, StorageBackend } from "./persistence.js";
 import { getPlaygroundScript, getPlaygroundStyle, renderApiPlayground } from "./playground.js";
@@ -8,12 +9,21 @@ import { EquipmentsStore } from "./store.js";
 const defaultRuntimeConfig: RuntimeConfig = { backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false };
 const defaultDevMode = process.env.NODE_ENV !== "production";
 
+declare module "fastify" {
+  interface FastifyRequest {
+    auth: AuthenticatedCaller | null;
+  }
+}
+
 export function buildServer(
   store = new EquipmentsStore(),
   runtimeConfig: RuntimeConfig = defaultRuntimeConfig,
-  devMode = defaultDevMode
+  devMode = defaultDevMode,
+  authConfig: BearerAuthConfig = loadBearerAuthConfig()
 ): FastifyInstance {
   const app = Fastify({ logger: false });
+
+  app.decorateRequest("auth", null);
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof DomainError) {
@@ -22,6 +32,16 @@ export function buildServer(
     }
 
     reply.status(500).send({ error: "internal server error" });
+  });
+
+  app.addHook("preHandler", async (request) => {
+    if (request.routeOptions.url === "/health") {
+      return;
+    }
+
+    const caller = authenticateBearerToken(request.headers.authorization, authConfig);
+    ensureScope(caller, requiredScopeForMethod(request.method));
+    request.auth = caller;
   });
 
   app.get("/", async (_request, reply) => {
@@ -137,4 +157,14 @@ export function buildServer(
   });
 
   return app;
+}
+
+function requiredScopeForMethod(method: string): Scope {
+  switch (method.toUpperCase()) {
+    case "GET":
+    case "HEAD":
+      return Scope.READ;
+    default:
+      return Scope.MODIFY;
+  }
 }
