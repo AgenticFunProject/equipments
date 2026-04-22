@@ -126,6 +126,14 @@ AVAILABLE → RESERVED → DISPATCHED ──┬──→ RETURNED → AVAILABLE
 | status | enum | ACTIVE, RELEASED |
 | createdAt | timestamp | |
 
+### Local User
+| Field | Type | Notes |
+|-------|------|-------|
+| id | UUID-like string | Stable local user identifier for future record metadata |
+| issuer | string | Token issuer or identity namespace |
+| subject | string | External caller subject within the issuer |
+| createdAt | timestamp | When the local mapping was created |
+
 ## Business Rules
 - Reservations are created atomically — either all requested units are reserved or the request fails
 - Released reservations (cancelled bookings) return containers to AVAILABLE immediately

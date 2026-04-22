@@ -7,6 +7,7 @@ import {
   ContainerStatus,
   type CreateReservationRequest,
   type EquipmentType,
+  type LocalUser,
   type Reservation,
   ReservationStatus
 } from "./types.js";
@@ -19,6 +20,7 @@ interface ListContainersFilter {
 
 export class EquipmentsStore {
   private equipmentTypes = new Map<string, EquipmentType>();
+  private users = new Map<string, LocalUser>();
   private containers = new Map<string, ContainerUnit>();
   private reservations = new Map<string, Reservation>();
   private reservationByBooking = new Map<string, string>();
@@ -365,6 +367,7 @@ export class EquipmentsStore {
 
   private restore(snapshot: StoreSnapshot): void {
     this.equipmentTypes = new Map(snapshot.equipmentTypes.map((equipmentType) => [equipmentType.code, equipmentType]));
+    this.users = new Map(snapshot.users.map((user) => [user.id, user]));
     this.containers = new Map(snapshot.containers.map((container) => [container.id, container]));
     this.reservations = new Map(snapshot.reservations.map((reservation) => [reservation.id, reservation]));
     this.reservationByBooking = new Map(snapshot.reservations.map((reservation) => [reservation.bookingReference, reservation.id]));
@@ -372,6 +375,7 @@ export class EquipmentsStore {
 
   private initializeState(seed = this.seedDefaults): void {
     this.equipmentTypes = new Map();
+    this.users = new Map();
     this.containers = new Map();
     this.reservations = new Map();
     this.reservationByBooking = new Map();
@@ -386,6 +390,7 @@ export class EquipmentsStore {
   private persist(): void {
     this.persistence?.save({
       equipmentTypes: this.listEquipmentTypes(),
+      users: Array.from(this.users.values()),
       containers: Array.from(this.containers.values()),
       reservations: Array.from(this.reservations.values())
     });

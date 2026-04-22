@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { DomainError } from "./errors.js";
-import type { ContainerUnit, EquipmentType, Reservation } from "./types.js";
+import type { ContainerUnit, EquipmentType, LocalUser, Reservation } from "./types.js";
 
 export const StorageBackend = {
   MEMORY: "memory",
@@ -20,6 +20,7 @@ export const STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV = "STORAGE_SQLITE_EMPTY_ON_F
 
 export interface StoreSnapshot {
   equipmentTypes: EquipmentType[];
+  users: LocalUser[];
   containers: ContainerUnit[];
   reservations: Reservation[];
 }
@@ -168,6 +169,14 @@ class SqlitePersistence implements StorePersistence {
         max_payload_kg REAL NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        issuer TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (issuer, subject)
+      );
+
       CREATE TABLE IF NOT EXISTS containers (
         id TEXT PRIMARY KEY,
         container_number TEXT NOT NULL UNIQUE,
@@ -218,6 +227,9 @@ class SqlitePersistence implements StorePersistence {
         "SELECT code, description, nominal_length AS nominalLength, max_payload_kg AS maxPayloadKg FROM equipment_types ORDER BY code"
       )
       .all() as unknown as EquipmentType[];
+    const users = this.db
+      .prepare("SELECT id, issuer, subject, created_at AS createdAt FROM users ORDER BY created_at, id")
+      .all() as unknown as LocalUser[];
     const containers = this.db
       .prepare(
         `SELECT
@@ -262,6 +274,7 @@ class SqlitePersistence implements StorePersistence {
 
     return {
       equipmentTypes,
+      users,
       containers,
       reservations: reservations.map((reservation) => ({
         ...reservation,
@@ -276,6 +289,9 @@ class SqlitePersistence implements StorePersistence {
     );
     const insertEquipmentType = this.db.prepare(
       "INSERT INTO equipment_types (code, description, nominal_length, max_payload_kg) VALUES (?, ?, ?, ?)"
+    );
+    const insertUser = this.db.prepare(
+      "INSERT INTO users (id, issuer, subject, created_at) VALUES (?, ?, ?, ?)"
     );
     const insertContainer = this.db.prepare(
       `INSERT INTO containers (
@@ -300,7 +316,7 @@ class SqlitePersistence implements StorePersistence {
     try {
       upsertMeta.run();
       this.db.exec(
-        "DELETE FROM reservation_containers; DELETE FROM reservations; DELETE FROM containers; DELETE FROM equipment_types; DELETE FROM store_snapshots;"
+        "DELETE FROM reservation_containers; DELETE FROM reservations; DELETE FROM containers; DELETE FROM users; DELETE FROM equipment_types; DELETE FROM store_snapshots;"
       );
 
       for (const equipmentType of snapshot.equipmentTypes) {
@@ -310,6 +326,10 @@ class SqlitePersistence implements StorePersistence {
           equipmentType.nominalLength,
           equipmentType.maxPayloadKg
         );
+      }
+
+      for (const user of snapshot.users) {
+        insertUser.run(user.id, user.issuer, user.subject, user.createdAt);
       }
 
       for (const container of snapshot.containers) {
@@ -369,6 +389,7 @@ function parseSnapshot(raw: string): StoreSnapshot {
   const parsed = JSON.parse(raw) as Partial<StoreSnapshot>;
   return {
     equipmentTypes: parsed.equipmentTypes ?? [],
+    users: parsed.users ?? [],
     containers: parsed.containers ?? [],
     reservations: parsed.reservations ?? []
   };
