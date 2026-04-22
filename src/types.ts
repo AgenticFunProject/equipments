@@ -23,6 +23,13 @@ export interface EquipmentType {
   maxPayloadKg: number;
 }
 
+export interface LocalUser {
+  id: string;
+  issuer: string;
+  subject: string;
+  createdAt: string;
+}
+
 export interface ContainerUnit {
   id: string;
   containerNumber: string;

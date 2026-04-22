@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
+  createPersistence,
   loadRuntimeConfig,
   normalizeBackend,
   STORAGE_BACKEND_ENV,
@@ -14,7 +15,39 @@ import {
   STORAGE_SQLITE_PATH_ENV,
   StorageBackend
 } from "../src/persistence.js";
+import type { StoreSnapshot } from "../src/persistence.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
+
+function createSnapshot(): StoreSnapshot {
+  return {
+    equipmentTypes: [
+      {
+        code: "45HC",
+        description: "45-foot High Cube",
+        nominalLength: "45'",
+        maxPayloadKg: 29500
+      }
+    ],
+    users: [
+      {
+        id: "usr-local-1",
+        issuer: "platform-auth",
+        subject: "ops-agent",
+        createdAt: "2026-04-22T00:00:00.000Z"
+      }
+    ],
+    containers: [],
+    reservations: []
+  };
+}
+
+function normalizeSnapshot(snapshot: StoreSnapshot | null): StoreSnapshot | null {
+  return snapshot ? JSON.parse(JSON.stringify(snapshot)) : snapshot;
+}
+
+function normalizeRecord<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 test("normalizeBackend accepts sqlite aliases", () => {
   for (const value of ["sqlite", "sqlite3", "sql", "persistent-sqlite", "persistent-sqlite3"]) {
@@ -88,6 +121,21 @@ test("db backend persists store state across restarts", () => {
     assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
     assert.equal(storeB.listAuditEvents().length, 1);
     assert.equal(storeB.listAuditEvents()[0].actor, "ops-user");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("db backend round-trips local users in persisted snapshots", () => {
+  const dir = mkdtempSync(join(tmpdir(), "equipments-db-users-"));
+  try {
+    const path = join(dir, "equipments.json");
+    const persistence = createPersistence({ backend: StorageBackend.DB, path });
+    const snapshot = createSnapshot();
+
+    persistence.save(snapshot);
+
+    assert.deepEqual(persistence.load(), snapshot);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -195,6 +243,28 @@ test("sqlite backend stores state in relational tables", () => {
       links.map((item) => item.containerId),
       [first.id, second.id]
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("sqlite backend persists local users in relational tables", () => {
+  const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-users-"));
+  try {
+    const path = join(dir, "equipments.sqlite");
+    const persistence = createPersistence({ backend: StorageBackend.SQLITE, path });
+    const snapshot = createSnapshot();
+
+    persistence.save(snapshot);
+
+    const loaded = persistence.load();
+    const db = new DatabaseSync(path);
+    const userRow = db.prepare("SELECT id, issuer, subject, created_at AS createdAt FROM users WHERE id = ?").get(
+      snapshot.users[0].id
+    ) as { id: string; issuer: string; subject: string; createdAt: string };
+
+    assert.deepEqual(normalizeSnapshot(loaded), snapshot);
+    assert.deepEqual(normalizeRecord(userRow), snapshot.users[0]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
