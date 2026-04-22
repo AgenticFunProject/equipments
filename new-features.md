@@ -10,6 +10,8 @@ The goal is to make the service feel more useful inside a larger ecosystem while
 3. Smart substitution suggestions
 4. Equipment availability forecast
 5. Customer priority and allocation rules
+6. Record ownership metadata
+7. Users table
 
 ## 1. User-Based API Calls With Tokens
 
@@ -279,6 +281,81 @@ The service should support strategic allocation of scarce equipment based on cus
 - helps manage scarce inventory strategically
 - fits well with token-based caller identity and scopes
 
+## 6. Record Ownership Metadata
+
+All persisted business records should carry consistent created-by and last-modified-by metadata, along with creation and update timestamps.
+
+### Proposed Approach
+
+- add `createdByUserId`, `lastModifiedByUserId`, `createdAt`, and `updatedAt` to every persisted table
+- populate these values from the authenticated caller identity where possible
+- update `lastModifiedByUserId` and `updatedAt` on every successful write
+- preserve `createdByUserId` and `createdAt` once the row is created
+
+### Suggested First Table Scope
+
+- `equipment_types`
+- `containers`
+- `reservations`
+- `audit_events`
+- future policy/configuration tables such as substitutions or allocation policies
+
+### Suggested Semantics
+
+- `createdByUserId`: the user or service identity responsible for initial creation
+- `lastModifiedByUserId`: the user or service identity responsible for the most recent successful write
+- `createdAt`: immutable creation timestamp
+- `updatedAt`: latest successful modification timestamp
+
+### Why This Helps
+
+- makes record ownership visible without querying audit history
+- improves support and operational debugging
+- creates a clean base for admin tooling and future UI screens
+- complements audit logs with durable row-level metadata
+
+### Notes
+
+For service-to-service calls, the value may initially come from token `sub` until a richer user synchronization model is in place.
+
+## 7. Users Table
+
+The service should maintain a local users table so persisted records can reference stable user identifiers instead of only raw token strings.
+
+### Proposed Approach
+
+- add a `users` table to the local persistence model
+- use stable user ids in business records and metadata columns
+- keep the first step limited to the schema and local persistence support
+- defer synchronization and ingestion logic to a later phase
+
+### Suggested Initial Fields
+
+- `id`
+- `externalIdentity`
+- `displayName`
+- `email`
+- `status`
+- `createdAt`
+- `updatedAt`
+
+### Current Scope Boundary
+
+- tokens still authenticate requests directly
+- the table exists so later work has a stable persistence target
+- mapping token identities into the users table is out of scope for this first step
+- synchronization from APIs or events is also out of scope for now
+
+### Why This Helps
+
+- gives stable foreign-key style references for `createdByUserId` and `lastModifiedByUserId`
+- separates authentication from user profile data
+- prepares the service for richer admin, reporting, and audit experiences
+
+### Notes
+
+This should stay reference-data-focused at first. It does not need to become a local login system.
+
 ## Recommended Rollout
 
 To keep scope controlled, implement these in stages.
@@ -305,14 +382,24 @@ To keep scope controlled, implement these in stages.
 
 - allocation policies based on customer or booking priority
 
+### Stage 6
+
+- created-by and last-modified metadata on persisted records
+
+### Stage 7
+
+- users table schema and persistence support
+
 ## Summary
 
-These five features work well together:
+These seven features work well together:
 
 - token-based authorization makes the service ecosystem-ready
 - audit logs make caller actions traceable
 - substitutions improve booking recovery
 - forecasting improves planning
 - allocation rules improve strategic inventory management
+- row-level ownership metadata makes business records self-describing
+- a users table creates stable identity references for future integrations
 
 The most important first move is token-based user/service authorization with only `equipments:read` and `equipments:modify`, because that gives the ecosystem a simple integration surface and provides the foundation for the rest. Audit logging is the next most natural step once caller identity is available.
