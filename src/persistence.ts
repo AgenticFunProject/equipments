@@ -179,7 +179,11 @@ class SqlitePersistence implements StorePersistence {
         code TEXT PRIMARY KEY,
         description TEXT NOT NULL,
         nominal_length TEXT NOT NULL,
-        max_payload_kg REAL NOT NULL
+        max_payload_kg REAL NOT NULL,
+        created_by_user_id TEXT,
+        last_modified_by_user_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS users (
@@ -197,8 +201,11 @@ class SqlitePersistence implements StorePersistence {
         status TEXT NOT NULL,
         current_depot TEXT NOT NULL,
         booking_reference TEXT,
+        created_by_user_id TEXT,
+        last_modified_by_user_id TEXT,
         last_moved_at TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
         FOREIGN KEY (equipment_type) REFERENCES equipment_types(code)
       );
 
@@ -207,7 +214,10 @@ class SqlitePersistence implements StorePersistence {
         booking_reference TEXT NOT NULL UNIQUE,
         origin_depot TEXT NOT NULL,
         status TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_by_user_id TEXT,
+        last_modified_by_user_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS reservation_containers (
@@ -224,6 +234,8 @@ class SqlitePersistence implements StorePersistence {
         state TEXT NOT NULL
       );
     `);
+    this.ensureAuditMetadataColumns();
+    this.backfillAuditMetadata();
     this.migrateLegacySnapshot();
   }
 
@@ -258,7 +270,17 @@ class SqlitePersistence implements StorePersistence {
 
     const equipmentTypes = this.db
       .prepare(
-        "SELECT code, description, nominal_length AS nominalLength, max_payload_kg AS maxPayloadKg FROM equipment_types ORDER BY code"
+        `SELECT
+          code,
+          description,
+          nominal_length AS nominalLength,
+          max_payload_kg AS maxPayloadKg,
+          created_by_user_id AS createdByUserId,
+          last_modified_by_user_id AS lastModifiedByUserId,
+          created_at AS createdAt,
+          updated_at AS updatedAt
+        FROM equipment_types
+        ORDER BY code`
       )
       .all() as unknown as EquipmentType[];
     const users = this.db
@@ -273,8 +295,11 @@ class SqlitePersistence implements StorePersistence {
           status,
           current_depot AS currentDepot,
           booking_reference AS bookingReference,
+          created_by_user_id AS createdByUserId,
+          last_modified_by_user_id AS lastModifiedByUserId,
           last_moved_at AS lastMovedAt,
-          created_at AS createdAt
+          created_at AS createdAt,
+          updated_at AS updatedAt
         FROM containers
         ORDER BY created_at, id`
       )
@@ -286,7 +311,10 @@ class SqlitePersistence implements StorePersistence {
           booking_reference AS bookingReference,
           origin_depot AS originDepot,
           status,
-          created_at AS createdAt
+          created_by_user_id AS createdByUserId,
+          last_modified_by_user_id AS lastModifiedByUserId,
+          created_at AS createdAt,
+          updated_at AS updatedAt
         FROM reservations
         ORDER BY created_at, id`
       )
@@ -336,7 +364,16 @@ class SqlitePersistence implements StorePersistence {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertEquipmentType = this.db.prepare(
-      "INSERT INTO equipment_types (code, description, nominal_length, max_payload_kg) VALUES (?, ?, ?, ?)"
+      `INSERT INTO equipment_types (
+        code,
+        description,
+        nominal_length,
+        max_payload_kg,
+        created_by_user_id,
+        last_modified_by_user_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertUser = this.db.prepare(
       "INSERT INTO users (id, issuer, subject, created_at) VALUES (?, ?, ?, ?)"
@@ -349,12 +386,24 @@ class SqlitePersistence implements StorePersistence {
         status,
         current_depot,
         booking_reference,
+        created_by_user_id,
+        last_modified_by_user_id,
         last_moved_at,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertReservation = this.db.prepare(
-      "INSERT INTO reservations (id, booking_reference, origin_depot, status, created_at) VALUES (?, ?, ?, ?, ?)"
+      `INSERT INTO reservations (
+        id,
+        booking_reference,
+        origin_depot,
+        status,
+        created_by_user_id,
+        last_modified_by_user_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertReservationContainer = this.db.prepare(
       "INSERT INTO reservation_containers (reservation_id, container_id, order_index) VALUES (?, ?, ?)"
@@ -386,7 +435,11 @@ class SqlitePersistence implements StorePersistence {
           equipmentType.code,
           equipmentType.description,
           equipmentType.nominalLength,
-          equipmentType.maxPayloadKg
+          equipmentType.maxPayloadKg,
+          equipmentType.createdByUserId,
+          equipmentType.lastModifiedByUserId,
+          equipmentType.createdAt,
+          equipmentType.updatedAt
         );
       }
 
@@ -402,8 +455,11 @@ class SqlitePersistence implements StorePersistence {
           container.status,
           container.currentDepot,
           container.bookingReference,
+          container.createdByUserId,
+          container.lastModifiedByUserId,
           container.lastMovedAt,
-          container.createdAt
+          container.createdAt,
+          container.updatedAt
         );
       }
 
@@ -413,7 +469,10 @@ class SqlitePersistence implements StorePersistence {
           reservation.bookingReference,
           reservation.originDepot,
           reservation.status,
-          reservation.createdAt
+          reservation.createdByUserId,
+          reservation.lastModifiedByUserId,
+          reservation.createdAt,
+          reservation.updatedAt
         );
 
         reservation.containers.forEach((containerId, index) => {
@@ -445,16 +504,71 @@ class SqlitePersistence implements StorePersistence {
 
     this.save(parseSnapshot(legacy.state));
   }
+
+  private ensureAuditMetadataColumns(): void {
+    this.ensureColumn("equipment_types", "created_by_user_id", "TEXT");
+    this.ensureColumn("equipment_types", "last_modified_by_user_id", "TEXT");
+    this.ensureColumn("equipment_types", "created_at", "TEXT");
+    this.ensureColumn("equipment_types", "updated_at", "TEXT");
+    this.ensureColumn("containers", "created_by_user_id", "TEXT");
+    this.ensureColumn("containers", "last_modified_by_user_id", "TEXT");
+    this.ensureColumn("containers", "updated_at", "TEXT");
+    this.ensureColumn("reservations", "created_by_user_id", "TEXT");
+    this.ensureColumn("reservations", "last_modified_by_user_id", "TEXT");
+    this.ensureColumn("reservations", "updated_at", "TEXT");
+  }
+
+  private ensureColumn(tableName: string, columnName: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    if (columns.some((column) => column.name === columnName)) {
+      return;
+    }
+
+    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+
+  private backfillAuditMetadata(): void {
+    this.db.exec(`
+      UPDATE equipment_types
+      SET created_at = COALESCE(created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+      UPDATE containers
+      SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+      UPDATE reservations
+      SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    `);
+  }
 }
 
 function parseSnapshot(raw: string): StoreSnapshot {
   const parsed = JSON.parse(raw) as Partial<StoreSnapshot>;
+  const now = new Date().toISOString();
   return {
     auditEvents: parsed.auditEvents ?? [],
-    equipmentTypes: parsed.equipmentTypes ?? [],
+    equipmentTypes: (parsed.equipmentTypes ?? []).map((equipmentType) => ({
+      ...equipmentType,
+      createdByUserId: equipmentType.createdByUserId ?? null,
+      lastModifiedByUserId: equipmentType.lastModifiedByUserId ?? null,
+      createdAt: equipmentType.createdAt ?? now,
+      updatedAt: equipmentType.updatedAt ?? equipmentType.createdAt ?? now
+    })),
     users: parsed.users ?? [],
-    containers: parsed.containers ?? [],
-    reservations: parsed.reservations ?? []
+    containers: (parsed.containers ?? []).map((container) => ({
+      ...container,
+      createdByUserId: container.createdByUserId ?? null,
+      lastModifiedByUserId: container.lastModifiedByUserId ?? null,
+      createdAt: container.createdAt ?? now,
+      updatedAt: container.updatedAt ?? container.createdAt ?? now
+    })),
+    reservations: (parsed.reservations ?? []).map((reservation) => ({
+      ...reservation,
+      createdByUserId: reservation.createdByUserId ?? null,
+      lastModifiedByUserId: reservation.lastModifiedByUserId ?? null,
+      createdAt: reservation.createdAt ?? now,
+      updatedAt: reservation.updatedAt ?? reservation.createdAt ?? now
+    }))
   };
 }
 

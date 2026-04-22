@@ -21,6 +21,10 @@ export interface EquipmentType {
   description: string;
   nominalLength: string;
   maxPayloadKg: number;
+  createdByUserId: string | null;
+  lastModifiedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface LocalUser {
@@ -37,8 +41,11 @@ export interface ContainerUnit {
   status: ContainerStatus;
   currentDepot: string;
   bookingReference: string | null;
+  createdByUserId: string | null;
+  lastModifiedByUserId: string | null;
   lastMovedAt: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface Reservation {
@@ -47,7 +54,10 @@ export interface Reservation {
   originDepot: string;
   containers: string[];
   status: ReservationStatus;
+  createdByUserId: string | null;
+  lastModifiedByUserId: string | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 export type AuditValue = boolean | number | string | string[] | null;

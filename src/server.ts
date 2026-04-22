@@ -16,6 +16,27 @@ declare module "fastify" {
   }
 }
 
+function getCallerIdentity(request: FastifyRequest): { issuer: string; subject: string } | undefined {
+  const issuer = readHeaderValue(request.headers["x-auth-issuer"]);
+  const subject = readHeaderValue(request.headers["x-auth-subject"]);
+
+  if (!issuer && !subject) {
+    return undefined;
+  }
+  if (!issuer || !subject) {
+    throw new DomainError("authenticated caller metadata requires both x-auth-issuer and x-auth-subject headers");
+  }
+
+  return { issuer, subject };
+}
+
+function readHeaderValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) {
+    return value[0]?.trim() ?? "";
+  }
+  return value?.trim() ?? "";
+}
+
 export function buildServer(
   store = new EquipmentsStore(),
   runtimeConfig: RuntimeConfig = defaultRuntimeConfig,
@@ -74,7 +95,7 @@ export function buildServer(
       return { code: body.code?.trim().toUpperCase() ?? "" };
     }
   }, async () => {
-    const created = store.createEquipmentType(request.body as any);
+    const created = store.createEquipmentType(request.body as any, getCallerIdentity(request));
     reply.status(201);
     return created;
   }));
@@ -89,7 +110,7 @@ export function buildServer(
     }
   }, () => {
     const params = request.params as { code: string };
-    return store.updateEquipmentType(params.code, request.body as any);
+    return store.updateEquipmentType(params.code, request.body as any, getCallerIdentity(request));
   }));
 
   app.post("/containers", async (request, reply) => auditedWrite(store, request, {
@@ -105,7 +126,7 @@ export function buildServer(
       };
     }
   }, async () => {
-    const created = store.registerContainer(request.body as any);
+    const created = store.registerContainer(request.body as any, getCallerIdentity(request));
     reply.status(201);
     return created;
   }));
@@ -135,7 +156,7 @@ export function buildServer(
   }, () => {
     const params = request.params as { id: string };
     const body = request.body as { status: string };
-    return store.overrideContainerStatus(params.id, body.status);
+    return store.overrideContainerStatus(params.id, body.status, getCallerIdentity(request));
   }));
 
   app.get("/availability", async (request) => {
@@ -156,13 +177,17 @@ export function buildServer(
       };
     }
   }, async () => {
-    const result = store.createReservation(request.body as any);
+    const result = store.createReservation(request.body as any, getCallerIdentity(request));
     reply.status(201);
     return {
       reservationId: result.reservation.id,
       bookingReference: result.reservation.bookingReference,
       assignedContainers: result.assignedContainers,
-      status: "RESERVED"
+      status: result.reservation.status,
+      createdByUserId: result.reservation.createdByUserId,
+      lastModifiedByUserId: result.reservation.lastModifiedByUserId,
+      createdAt: result.reservation.createdAt,
+      updatedAt: result.reservation.updatedAt
     };
   }));
 
@@ -176,11 +201,15 @@ export function buildServer(
     }
   }, () => {
     const params = request.params as { bookingReference: string };
-    const reservation = store.releaseReservationByBooking(params.bookingReference);
+    const reservation = store.releaseReservationByBooking(params.bookingReference, getCallerIdentity(request));
     return {
       reservationId: reservation.id,
       bookingReference: reservation.bookingReference,
-      status: reservation.status
+      status: reservation.status,
+      createdByUserId: reservation.createdByUserId,
+      lastModifiedByUserId: reservation.lastModifiedByUserId,
+      createdAt: reservation.createdAt,
+      updatedAt: reservation.updatedAt
     };
   }));
 
@@ -191,7 +220,7 @@ export function buildServer(
     requestContext: (request) => ({ containerId: (request.params as { id: string }).id })
   }, () => {
     const params = request.params as { id: string };
-    return store.pickupContainer(params.id);
+    return store.pickupContainer(params.id, getCallerIdentity(request));
   }));
 
   app.post("/containers/:id/return", async (request) => auditedWrite(store, request, {
@@ -201,7 +230,7 @@ export function buildServer(
     requestContext: (request) => ({ containerId: (request.params as { id: string }).id })
   }, () => {
     const params = request.params as { id: string };
-    return store.returnContainer(params.id);
+    return store.returnContainer(params.id, getCallerIdentity(request));
   }));
 
   app.post("/events", async (request) => auditedWrite(store, request, {
@@ -217,7 +246,7 @@ export function buildServer(
     }
   }, () => {
     const body = request.body as { eventType: string; payload: { bookingReference: string } };
-    return store.consumeEvent(body.eventType, body.payload);
+    return store.consumeEvent(body.eventType, body.payload, getCallerIdentity(request));
   }));
 
   app.post("/dev/reset-all-data", async (request, reply) => auditedWrite(store, request, {

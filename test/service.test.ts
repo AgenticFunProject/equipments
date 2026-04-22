@@ -41,6 +41,13 @@ function authHeader(scopes: string[] = [Scope.READ, Scope.MODIFY], overrides: Pa
   return { authorization: `Bearer ${encodedHeader}.${encodedPayload}.${signature}` };
 }
 
+function authHeaders(subject: string, issuer = "platform-auth") {
+  return {
+    "x-auth-issuer": issuer,
+    "x-auth-subject": subject
+  };
+}
+
 test("GET /health returns ok", async () => {
   const app = createApp();
   const response = await app.inject({ method: "GET", url: "/health" });
@@ -337,6 +344,109 @@ test("equipment type endpoints support list/create/update", async () => {
   const afterBody = after.json() as { equipmentTypes: Array<{ code: string }> };
   assert.equal(afterBody.equipmentTypes.length, 6);
   assert.ok(afterBody.equipmentTypes.some((item) => item.code === "45HC"));
+});
+
+test("write endpoints attach audit metadata from authenticated caller headers", async () => {
+  const app = createApp();
+
+  const create = await app.inject({
+    method: "POST",
+    url: "/equipment-types",
+    headers: authHeaders("ops-create"),
+    payload: {
+      code: "45HC",
+      description: "45-foot High Cube",
+      nominalLength: "45'",
+      maxPayloadKg: 29500
+    }
+  });
+  assert.equal(create.statusCode, 201);
+  const createdBody = create.json() as {
+    createdByUserId: string;
+    lastModifiedByUserId: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+  assert.match(createdBody.createdByUserId, /^usr-/);
+  assert.equal(createdBody.lastModifiedByUserId, createdBody.createdByUserId);
+  assert.equal(createdBody.createdAt, createdBody.updatedAt);
+
+  const update = await app.inject({
+    method: "PUT",
+    url: "/equipment-types/45HC",
+    headers: authHeaders("ops-update"),
+    payload: {
+      description: "45-foot High Cube Updated"
+    }
+  });
+  assert.equal(update.statusCode, 200);
+  const updatedBody = update.json() as {
+    createdByUserId: string;
+    lastModifiedByUserId: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+  assert.equal(updatedBody.createdByUserId, createdBody.createdByUserId);
+  assert.notEqual(updatedBody.lastModifiedByUserId, createdBody.lastModifiedByUserId);
+  assert.equal(updatedBody.createdAt, createdBody.createdAt);
+  assert.notEqual(updatedBody.updatedAt, createdBody.updatedAt);
+});
+
+test("reservation and container writes reuse stable local user ids", async () => {
+  const app = createApp();
+  const headers = authHeaders("ops-agent");
+
+  const reserve = await app.inject({
+    method: "POST",
+    url: "/reservations",
+    headers,
+    payload: {
+      bookingReference: "BKG-AUDIT-1",
+      originDepot: "CNSHA-01",
+      equipment: [{ type: "20FT", quantity: 1 }]
+    }
+  });
+  assert.equal(reserve.statusCode, 201);
+  const reservationBody = reserve.json() as {
+    assignedContainers: Array<{ containerId: string }>;
+    createdByUserId: string;
+    lastModifiedByUserId: string;
+  };
+  assert.match(reservationBody.createdByUserId, /^usr-/);
+  assert.equal(reservationBody.lastModifiedByUserId, reservationBody.createdByUserId);
+
+  const containerId = reservationBody.assignedContainers[0].containerId;
+  const pickup = await app.inject({ method: "POST", url: `/containers/${containerId}/pickup`, headers });
+  assert.equal(pickup.statusCode, 200);
+  const pickupBody = pickup.json() as { createdByUserId: string | null; lastModifiedByUserId: string | null };
+  assert.equal(pickupBody.lastModifiedByUserId, reservationBody.createdByUserId);
+
+  const fetched = await app.inject({ method: "GET", url: `/containers/${containerId}` });
+  assert.equal(fetched.statusCode, 200);
+  const fetchedBody = fetched.json() as { createdByUserId: string | null; lastModifiedByUserId: string | null };
+  assert.equal(fetchedBody.createdByUserId, null);
+  assert.equal(fetchedBody.lastModifiedByUserId, reservationBody.createdByUserId);
+});
+
+test("partial authenticated caller headers are rejected", async () => {
+  const app = createApp();
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/equipment-types",
+    headers: { "x-auth-issuer": "platform-auth" },
+    payload: {
+      code: "45HC",
+      description: "45-foot High Cube",
+      nominalLength: "45'",
+      maxPayloadKg: 29500
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    error: "authenticated caller metadata requires both x-auth-issuer and x-auth-subject headers"
+  });
 });
 
 test("equipment type endpoints return expected errors", async () => {
