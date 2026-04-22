@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 
-import { authenticateBearerToken, type AuthenticatedCaller, type BearerAuthConfig, ensureScope, loadBearerAuthConfig, Scope } from "./auth.js";
+import { authenticateBearerToken, createBearerToken, type AuthenticatedCaller, type BearerAuthConfig, ensureScope, loadBearerAuthConfig, Scope } from "./auth.js";
 import { DomainError } from "./errors.js";
 import { type RuntimeConfig, StorageBackend } from "./persistence.js";
 import { getPlaygroundScript, getPlaygroundStyle, renderApiPlayground } from "./playground.js";
@@ -277,6 +277,45 @@ export function buildServer(
     return store.clearAllData();
   }));
 
+  app.post("/dev/generate-token", async (request, reply) => {
+    if (!devMode) {
+      reply.status(404).send({ error: "not found" });
+      return;
+    }
+
+    const body = request.body as { subject?: string; scopes?: string[]; expiresInMinutes?: number };
+    const subject = body.subject?.trim() ?? "";
+    if (!subject) {
+      throw new DomainError("token subject is required");
+    }
+
+    const scopes = Array.isArray(body.scopes) ? body.scopes.map((scope) => scope.trim()).filter(Boolean) : [];
+    if (!scopes.length) {
+      throw new DomainError("at least one token scope is required");
+    }
+
+    const expiresInMinutes = Number(body.expiresInMinutes);
+    if (!Number.isFinite(expiresInMinutes) || expiresInMinutes <= 0) {
+      throw new DomainError("token expiry must be a positive number of minutes");
+    }
+
+    const token = createBearerToken(authConfig, {
+      subject,
+      scopes,
+      expiresInSeconds: Math.floor(expiresInMinutes * 60)
+    });
+
+    reply.status(201);
+    return {
+      token,
+      issuer: authConfig.issuer,
+      audience: authConfig.audience,
+      subject,
+      scopes,
+      expiresInMinutes
+    };
+  });
+
   return app;
 }
 
@@ -291,7 +330,7 @@ function requiredScopeForMethod(method: string): Scope {
 }
 
 function isPublicRoute(url: string): boolean {
-  return url === "/" || url === "/health" || url === "/playground" || url.startsWith("/playground/");
+  return url === "/" || url === "/health" || url === "/playground" || url.startsWith("/playground/") || url === "/dev/generate-token";
 }
 
 interface EquipmentTypeBody {

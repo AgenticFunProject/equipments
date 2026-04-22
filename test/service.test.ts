@@ -171,6 +171,8 @@ test("GET /playground serves the HTML playground", async () => {
   assert.match(response.body, /Get Container/);
   assert.match(response.body, /Active Backend/);
   assert.match(response.body, /Bearer token/);
+  assert.match(response.body, /Generate Token/);
+  assert.match(response.body, /Token subject/);
   assert.match(response.body, /equipments:read/);
   assert.match(response.body, /equipments:modify/);
   assert.match(response.body, /GET \/health/);
@@ -225,6 +227,9 @@ test("GET /playground/playground.js serves the client script", async () => {
   assert.match(response.body, /getContainer:/);
   assert.match(response.body, /authHint:/);
   assert.match(response.body, /const bearerTokenInput =/);
+  assert.match(response.body, /const generateTokenButton =/);
+  assert.match(response.body, /\/dev\/generate-token/);
+  assert.match(response.body, /function generateToken\(/);
   assert.match(response.body, /function isPublicPath\(/);
   assert.match(response.body, /function resetResponseOutput\(/);
   assert.match(response.body, /function runDevDataAction\(/);
@@ -295,6 +300,71 @@ test("POST /dev/clear-all-data clears state to empty in development mode", async
 
   const containers = await app.inject({ method: "GET", url: "/containers", headers: authHeader([Scope.READ]) });
   assert.deepEqual(containers.json(), { containers: [] });
+});
+
+test("POST /dev/generate-token returns a usable bearer token in development mode", async () => {
+  const app = createApp();
+
+  const generate = await app.inject({
+    method: "POST",
+    url: "/dev/generate-token",
+    payload: {
+      subject: "playground-user",
+      scopes: [Scope.READ],
+      expiresInMinutes: 60
+    }
+  });
+
+  assert.equal(generate.statusCode, 201);
+  const generatedBody = generate.json() as {
+    token: string;
+    subject: string;
+    scopes: string[];
+  };
+  assert.equal(generatedBody.subject, "playground-user");
+  assert.deepEqual(generatedBody.scopes, [Scope.READ]);
+  assert.match(generatedBody.token, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+
+  const authorized = await app.inject({
+    method: "GET",
+    url: "/availability?depotCode=CNSHA-01",
+    headers: { authorization: `Bearer ${generatedBody.token}` }
+  });
+  assert.equal(authorized.statusCode, 200);
+});
+
+test("POST /dev/generate-token validates required fields", async () => {
+  const app = createApp();
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/dev/generate-token",
+    payload: {
+      subject: "",
+      scopes: [],
+      expiresInMinutes: 0
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), { error: "token subject is required" });
+});
+
+test("POST /dev/generate-token is unavailable outside development mode", async () => {
+  const app = buildServer(new EquipmentsStore(true), undefined, false, authConfig);
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/dev/generate-token",
+    payload: {
+      subject: "playground-user",
+      scopes: [Scope.READ],
+      expiresInMinutes: 60
+    }
+  });
+
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(response.json(), { error: "not found" });
 });
 
 test("POST /dev/reset-all-data is unavailable outside development mode", async () => {

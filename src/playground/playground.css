@@ -248,6 +248,13 @@ textarea {
   gap: 6px;
 }
 
+.token-generator {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(180px, 1fr) minmax(160px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
 .scope-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -287,6 +294,17 @@ textarea {
 .request-auth-hint {
   margin-top: 10px;
   justify-self: start;
+}
+
+.secondary {
+  border: 1px solid rgba(125, 211, 252, 0.32);
+  background: rgba(14, 165, 233, 0.16);
+  color: #e0f2fe;
+}
+
+.secondary:hover {
+  border-color: rgba(125, 211, 252, 0.54);
+  background: rgba(14, 165, 233, 0.24);
 }
 
 .request-grid {
@@ -485,7 +503,8 @@ textarea {
   .editor-grid,
   .request-grid,
   .meta,
-  .scope-grid {
+  .scope-grid,
+  .token-generator {
     grid-template-columns: 1fr;
   }
 

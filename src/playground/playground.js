@@ -61,6 +61,10 @@ const responseText = document.getElementById("responseText");
 const responseDetail = document.getElementById("responseDetail");
 const responseTime = document.getElementById("responseTime");
 const bearerTokenInput = document.getElementById("bearerToken");
+const tokenSubjectInput = document.getElementById("tokenSubject");
+const tokenScopesInput = document.getElementById("tokenScopes");
+const tokenExpiryMinutesInput = document.getElementById("tokenExpiryMinutes");
+const generateTokenButton = document.getElementById("generateToken");
 const requestAuthHint = document.getElementById("requestAuthHint");
 const sendButton = document.getElementById("send");
 const resetAllDataButton = document.getElementById("resetAllData");
@@ -190,6 +194,72 @@ async function runDevDataAction(button, url, pendingDetail, successDetail, failu
   }
 }
 
+function scopesFromSelection(value) {
+  switch (value) {
+    case "read":
+      return ["equipments:read"];
+    case "modify":
+      return ["equipments:modify"];
+    default:
+      return ["equipments:read", "equipments:modify"];
+  }
+}
+
+async function generateToken() {
+  if (!generateTokenButton) {
+    return;
+  }
+
+  const subject = tokenSubjectInput.value.trim();
+  if (!subject) {
+    setResponseStatus("Missing subject", "Token not generated", "Add a subject before generating a token.", "status-error");
+    return;
+  }
+
+  const expiresInMinutes = Number(tokenExpiryMinutesInput.value);
+  if (!Number.isFinite(expiresInMinutes) || expiresInMinutes <= 0) {
+    setResponseStatus("Invalid expiry", "Token not generated", "Choose a positive token lifetime.", "status-error");
+    return;
+  }
+
+  generateTokenButton.disabled = true;
+  setResponseStatus("Working", "Generating token", "Requesting a dev-only bearer token from the running service.", "status-idle");
+  responseTime.textContent = "Duration: -";
+
+  const startedAt = performance.now();
+
+  try {
+    const response = await fetch("/dev/generate-token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        subject,
+        scopes: scopesFromSelection(tokenScopesInput.value),
+        expiresInMinutes
+      })
+    });
+    const duration = Math.round(performance.now() - startedAt);
+    const payload = await response.json();
+
+    if (response.ok) {
+      bearerTokenInput.value = payload.token;
+      setResponseStatus(String(response.status), "Token ready", "A dev-only bearer token was generated and copied into the token field.", "status-ok");
+      responseBodyInput.value = JSON.stringify(payload, null, 2);
+    } else {
+      setResponseStatus(String(response.status), response.statusText || "Token generation failed", "The token generator endpoint returned an error.", "status-error");
+      responseBodyInput.value = JSON.stringify(payload, null, 2);
+    }
+
+    responseTime.textContent = `Duration: ${duration} ms`;
+  } catch (error) {
+    setResponseStatus("Request failed", "Network error", "The playground could not reach the token generator endpoint.", "status-error");
+    responseTime.textContent = "Duration: -";
+    responseBodyInput.value = String(error);
+  } finally {
+    generateTokenButton.disabled = false;
+  }
+}
+
 function isPublicPath(path) {
   return path === "/" || path === "/health" || path === "/playground" || path.startsWith("/playground/");
 }
@@ -219,6 +289,7 @@ document.querySelectorAll(".preset").forEach((button) => {
 });
 
 sendButton.addEventListener("click", sendRequest);
+generateTokenButton?.addEventListener("click", generateToken);
 resetAllDataButton?.addEventListener("click", resetAllData);
 clearAllDataButton?.addEventListener("click", clearAllData);
 loadPreset("availability");

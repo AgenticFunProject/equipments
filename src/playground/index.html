@@ -83,6 +83,30 @@
               Bearer token
               <input id="bearerToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste JWT for protected routes" />
             </label>
+            <div class="token-generator">
+              <label>
+                Token subject
+                <input id="tokenSubject" type="text" autocomplete="off" spellcheck="false" value="playground-user" />
+              </label>
+              <label>
+                Token scopes
+                <select id="tokenScopes">
+                  <option value="read">equipments:read</option>
+                  <option value="modify">equipments:modify</option>
+                  <option value="both" selected>equipments:read + equipments:modify</option>
+                </select>
+              </label>
+              <label>
+                Expires in
+                <select id="tokenExpiryMinutes">
+                  <option value="15">15 minutes</option>
+                  <option value="60" selected>60 minutes</option>
+                  <option value="240">4 hours</option>
+                  <option value="480">8 hours</option>
+                </select>
+              </label>
+              <button id="generateToken" class="secondary" type="button">Generate Token</button>
+            </div>
             <div class="scope-grid" aria-label="Authorization scope guide">
               <div class="scope-card scope-card-public">
                 <span class="scope-label">Public</span>

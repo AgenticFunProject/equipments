@@ -40,6 +40,11 @@ interface JwtPayload {
   scope?: string;
 }
 
+interface JwtHeaderOutput {
+  alg: "HS256";
+  typ: "JWT";
+}
+
 export function loadBearerAuthConfig(env = process.env): BearerAuthConfig {
   return {
     issuer: env[AUTH_JWT_ISSUER_ENV]?.trim() || "platform-auth",
@@ -111,6 +116,38 @@ export function ensureScope(caller: AuthenticatedCaller, requiredScope: Scope): 
   if (!caller.scopes.includes(requiredScope)) {
     throw new DomainError(`missing required scope ${requiredScope}`, 403);
   }
+}
+
+export function createBearerToken(
+  config: BearerAuthConfig,
+  input: { subject: string; scopes: string[]; expiresInSeconds: number }
+): string {
+  const subject = input.subject.trim();
+  if (!subject) {
+    throw new DomainError("bearer token subject is required");
+  }
+
+  const expiresInSeconds = Math.floor(input.expiresInSeconds);
+  if (!Number.isFinite(expiresInSeconds) || expiresInSeconds <= 0) {
+    throw new DomainError("bearer token expiry must be positive");
+  }
+
+  const header: JwtHeaderOutput = { alg: "HS256", typ: "JWT" };
+  const payload: JwtPayload = {
+    sub: subject,
+    iss: config.issuer,
+    aud: config.audience,
+    exp: Math.floor(Date.now() / 1000) + expiresInSeconds,
+    scope: input.scopes.join(" ")
+  };
+
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", config.secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest("base64url");
+
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
 }
 
 function parseBearerHeader(header: string | undefined): string {
