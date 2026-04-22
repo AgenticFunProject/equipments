@@ -72,6 +72,36 @@
         </aside>
 
         <section class="panel panel-body workspace">
+          <div class="auth-panel">
+            <div class="auth-panel-copy">
+              <h2>Authorization</h2>
+              <p class="subtitle auth-subtitle">
+                Paste a bearer token for protected routes. Public routes such as <code>GET /health</code> stay callable without one.
+              </p>
+            </div>
+            <label class="token-field">
+              Bearer token
+              <input id="bearerToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste JWT for protected routes" />
+            </label>
+            <div class="scope-grid" aria-label="Authorization scope guide">
+              <div class="scope-card scope-card-public">
+                <span class="scope-label">Public</span>
+                <strong>No token required</strong>
+                <span><code>GET /health</code></span>
+              </div>
+              <div class="scope-card">
+                <span class="scope-label">equipments:read</span>
+                <strong>Read-only API calls</strong>
+                <span><code>GET</code> and <code>HEAD</code> service routes</span>
+              </div>
+              <div class="scope-card">
+                <span class="scope-label">equipments:modify</span>
+                <strong>State-changing API calls</strong>
+                <span><code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code></span>
+              </div>
+            </div>
+          </div>
+
           <div class="request-section">
             <h2>Request</h2>
             <div class="request-grid">
@@ -91,6 +121,7 @@
               </label>
               <button id="send" class="send" type="button">Send Request</button>
             </div>
+            <div id="requestAuthHint" class="request-auth-hint pill">This preset is public. A bearer token is optional.</div>
           </div>
 
           <div class="editor-grid">

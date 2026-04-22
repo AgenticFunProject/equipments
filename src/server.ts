@@ -35,7 +35,7 @@ export function buildServer(
   });
 
   app.addHook("preHandler", async (request) => {
-    if (request.routeOptions.url === "/health") {
+    if (isPublicRoute(request.routeOptions.url ?? request.url)) {
       return;
     }
 
@@ -167,4 +167,8 @@ function requiredScopeForMethod(method: string): Scope {
     default:
       return Scope.MODIFY;
   }
+}
+
+function isPublicRoute(url: string): boolean {
+  return url === "/" || url === "/health" || url === "/playground" || url.startsWith("/playground/");
 }

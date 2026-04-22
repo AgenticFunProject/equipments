@@ -225,6 +225,70 @@ textarea {
   align-content: start;
 }
 
+.auth-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 16px;
+  background: rgba(8, 47, 73, 0.26);
+}
+
+.auth-panel-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.auth-subtitle {
+  max-width: none;
+}
+
+.token-field {
+  display: grid;
+  gap: 6px;
+}
+
+.scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.scope-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.scope-card-public {
+  border-color: rgba(74, 222, 128, 0.22);
+  background: rgba(20, 83, 45, 0.26);
+}
+
+.scope-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+}
+
+.scope-card strong {
+  color: #f8fafc;
+}
+
+.scope-card span:last-child {
+  color: #cbd5e1;
+  font-size: 0.84rem;
+}
+
+.request-auth-hint {
+  margin-top: 10px;
+  justify-self: start;
+}
+
 .request-grid {
   display: grid;
   grid-template-columns: 116px minmax(0, 1fr) 112px;
@@ -420,7 +484,8 @@ textarea {
   .layout,
   .editor-grid,
   .request-grid,
-  .meta {
+  .meta,
+  .scope-grid {
     grid-template-columns: 1fr;
   }
 

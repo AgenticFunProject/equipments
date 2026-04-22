@@ -202,7 +202,7 @@ EOF
 
 Then call protected routes with `-H "Authorization: Bearer $TOKEN"`.
 
-The browser playground is also protected by bearer auth, so direct browser navigation only works when an upstream client or proxy adds the authorization header.
+The browser playground stays publicly reachable so you can paste a bearer token into the UI before sending protected requests. It also calls out that `GET /health` is public while read routes need `equipments:read` and write routes need `equipments:modify`.
 
 The dev-only data actions are only exposed when `NODE_ENV` is not `production`:
 

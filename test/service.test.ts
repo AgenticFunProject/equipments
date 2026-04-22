@@ -67,7 +67,7 @@ test("write routes reject read-only tokens", async () => {
 
 test("GET / redirects to the API playground", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/", headers: authHeader([Scope.READ]) });
+  const response = await app.inject({ method: "GET", url: "/" });
 
   assert.equal(response.statusCode, 302);
   assert.equal(response.headers.location, "/playground");
@@ -75,7 +75,7 @@ test("GET / redirects to the API playground", async () => {
 
 test("GET /playground serves the HTML playground", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/playground", headers: authHeader([Scope.READ]) });
+  const response = await app.inject({ method: "GET", url: "/playground" });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"] ?? "", /^text\/html/);
@@ -84,6 +84,10 @@ test("GET /playground serves the HTML playground", async () => {
   assert.match(response.body, /Update Equipment Type/);
   assert.match(response.body, /Get Container/);
   assert.match(response.body, /Active Backend/);
+  assert.match(response.body, /Bearer token/);
+  assert.match(response.body, /equipments:read/);
+  assert.match(response.body, /equipments:modify/);
+  assert.match(response.body, /GET \/health/);
   assert.match(response.body, /memory/);
   assert.match(response.body, /\/playground\/playground\.css/);
   assert.match(response.body, /\/playground\/playground\.js/);
@@ -97,7 +101,7 @@ test("GET /playground shows configured backend path when present", async () => {
     backend: StorageBackend.SQLITE,
     path: "/tmp/equipments.sqlite"
   }, undefined, authConfig);
-  const response = await app.inject({ method: "GET", url: "/playground", headers: authHeader([Scope.READ]) });
+  const response = await app.inject({ method: "GET", url: "/playground" });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.body, /sqlite/);
@@ -106,7 +110,7 @@ test("GET /playground shows configured backend path when present", async () => {
 
 test("GET /playground hides reset controls outside development mode", async () => {
   const app = buildServer(new EquipmentsStore(true), undefined, false, authConfig);
-  const response = await app.inject({ method: "GET", url: "/playground", headers: authHeader([Scope.READ]) });
+  const response = await app.inject({ method: "GET", url: "/playground" });
 
   assert.equal(response.statusCode, 200);
   assert.doesNotMatch(response.body, /Reset All Data/);
@@ -116,22 +120,26 @@ test("GET /playground hides reset controls outside development mode", async () =
 
 test("GET /playground/playground.css serves the stylesheet", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/playground/playground.css", headers: authHeader([Scope.READ]) });
+  const response = await app.inject({ method: "GET", url: "/playground/playground.css" });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"] ?? "", /^text\/css/);
   assert.match(response.body, /\.backend-chip/);
+  assert.match(response.body, /\.auth-panel/);
 });
 
 test("GET /playground/playground.js serves the client script", async () => {
   const app = createApp();
-  const response = await app.inject({ method: "GET", url: "/playground/playground.js", headers: authHeader([Scope.READ]) });
+  const response = await app.inject({ method: "GET", url: "/playground/playground.js" });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"] ?? "", /^text\/javascript/);
   assert.match(response.body, /const presets =/);
   assert.match(response.body, /updateType:/);
   assert.match(response.body, /getContainer:/);
+  assert.match(response.body, /authHint:/);
+  assert.match(response.body, /const bearerTokenInput =/);
+  assert.match(response.body, /function isPublicPath\(/);
   assert.match(response.body, /function resetResponseOutput\(/);
   assert.match(response.body, /function runDevDataAction\(/);
   assert.match(response.body, /function resetAllData\(/);

@@ -1,41 +1,53 @@
 const presets = {
-  health: { method: "GET", path: "/health", body: "" },
-  listTypes: { method: "GET", path: "/equipment-types", body: "" },
+  health: { method: "GET", path: "/health", body: "", auth: "public", authHint: "This preset is public. A bearer token is optional." },
+  listTypes: { method: "GET", path: "/equipment-types", body: "", auth: "equipments:read", authHint: "This preset needs the equipments:read scope." },
   createType: {
     method: "POST",
     path: "/equipment-types",
-    body: JSON.stringify({ code: "45HC", description: "45-foot High Cube", nominalLength: "45'", maxPayloadKg: 29500 }, null, 2)
+    body: JSON.stringify({ code: "45HC", description: "45-foot High Cube", nominalLength: "45'", maxPayloadKg: 29500 }, null, 2),
+    auth: "equipments:modify",
+    authHint: "This preset needs the equipments:modify scope."
   },
   updateType: {
     method: "PUT",
     path: "/equipment-types/45HC",
-    body: JSON.stringify({ description: "45-foot High Cube Updated", nominalLength: "45'", maxPayloadKg: 29750 }, null, 2)
+    body: JSON.stringify({ description: "45-foot High Cube Updated", nominalLength: "45'", maxPayloadKg: 29750 }, null, 2),
+    auth: "equipments:modify",
+    authHint: "This preset needs the equipments:modify scope."
   },
   registerContainer: {
     method: "POST",
     path: "/containers",
-    body: JSON.stringify({ containerNumber: "MSKU1234567", equipmentType: "20FT", currentDepot: "NLRTM-01" }, null, 2)
+    body: JSON.stringify({ containerNumber: "MSKU1234567", equipmentType: "20FT", currentDepot: "NLRTM-01" }, null, 2),
+    auth: "equipments:modify",
+    authHint: "This preset needs the equipments:modify scope."
   },
-  listContainers: { method: "GET", path: "/containers?status=AVAILABLE", body: "" },
-  getContainer: { method: "GET", path: "/containers/{id}", body: "" },
+  listContainers: { method: "GET", path: "/containers?status=AVAILABLE", body: "", auth: "equipments:read", authHint: "This preset needs the equipments:read scope." },
+  getContainer: { method: "GET", path: "/containers/{id}", body: "", auth: "equipments:read", authHint: "This preset needs the equipments:read scope." },
   overrideStatus: {
     method: "PATCH",
     path: "/containers/{id}/status",
-    body: JSON.stringify({ status: "DISPATCHED" }, null, 2)
+    body: JSON.stringify({ status: "DISPATCHED" }, null, 2),
+    auth: "equipments:modify",
+    authHint: "This preset needs the equipments:modify scope."
   },
-  pickup: { method: "POST", path: "/containers/{id}/pickup", body: "" },
-  return: { method: "POST", path: "/containers/{id}/return", body: "" },
-  availability: { method: "GET", path: "/availability?depotCode=CNSHA-01", body: "" },
+  pickup: { method: "POST", path: "/containers/{id}/pickup", body: "", auth: "equipments:modify", authHint: "This preset needs the equipments:modify scope." },
+  return: { method: "POST", path: "/containers/{id}/return", body: "", auth: "equipments:modify", authHint: "This preset needs the equipments:modify scope." },
+  availability: { method: "GET", path: "/availability?depotCode=CNSHA-01", body: "", auth: "equipments:read", authHint: "This preset needs the equipments:read scope." },
   reserve: {
     method: "POST",
     path: "/reservations",
-    body: JSON.stringify({ bookingReference: "BKG-2026-00042", originDepot: "CNSHA-01", equipment: [{ type: "20FT", quantity: 2 }] }, null, 2)
+    body: JSON.stringify({ bookingReference: "BKG-2026-00042", originDepot: "CNSHA-01", equipment: [{ type: "20FT", quantity: 2 }] }, null, 2),
+    auth: "equipments:modify",
+    authHint: "This preset needs the equipments:modify scope."
   },
-  release: { method: "DELETE", path: "/reservations/BKG-2026-00042", body: "" },
+  release: { method: "DELETE", path: "/reservations/BKG-2026-00042", body: "", auth: "equipments:modify", authHint: "This preset needs the equipments:modify scope." },
   event: {
     method: "POST",
     path: "/events",
-    body: JSON.stringify({ eventType: "booking.cancelled", payload: { bookingReference: "BKG-2026-00042" } }, null, 2)
+    body: JSON.stringify({ eventType: "booking.cancelled", payload: { bookingReference: "BKG-2026-00042" } }, null, 2),
+    auth: "equipments:modify",
+    authHint: "This preset needs the equipments:modify scope."
   }
 };
 
@@ -48,6 +60,8 @@ const responseCode = document.getElementById("responseCode");
 const responseText = document.getElementById("responseText");
 const responseDetail = document.getElementById("responseDetail");
 const responseTime = document.getElementById("responseTime");
+const bearerTokenInput = document.getElementById("bearerToken");
+const requestAuthHint = document.getElementById("requestAuthHint");
 const sendButton = document.getElementById("send");
 const resetAllDataButton = document.getElementById("resetAllData");
 const clearAllDataButton = document.getElementById("clearAllData");
@@ -74,6 +88,7 @@ function loadPreset(name) {
   methodInput.value = preset.method;
   pathInput.value = preset.path;
   requestBodyInput.value = preset.body;
+  requestAuthHint.textContent = preset.authHint;
   resetResponseOutput();
 
   document.querySelectorAll(".preset").forEach((button) => {
@@ -85,6 +100,7 @@ async function sendRequest() {
   const method = methodInput.value;
   const path = pathInput.value.trim();
   const rawBody = requestBodyInput.value.trim();
+  const bearerToken = bearerTokenInput.value.trim();
 
   if (!path) {
     setResponseStatus("Missing path", "Request blocked", "Add a path before sending the request.", "status-error");
@@ -93,6 +109,10 @@ async function sendRequest() {
 
   const headers = {};
   const options = { method, headers };
+
+  if (bearerToken && !isPublicPath(path)) {
+    headers.authorization = `Bearer ${bearerToken}`;
+  }
 
   if (rawBody) {
     try {
@@ -140,9 +160,16 @@ async function runDevDataAction(button, url, pendingDetail, successDetail, failu
   responseTime.textContent = "Duration: -";
 
   const startedAt = performance.now();
+  const bearerToken = bearerTokenInput.value.trim();
+
+  if (!bearerToken) {
+    setResponseStatus("Missing token", "Request blocked", "Paste a bearer token with the equipments:modify scope before using dev-only actions.", "status-error");
+    button.disabled = false;
+    return;
+  }
 
   try {
-    const response = await fetch(url, { method: "POST" });
+    const response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${bearerToken}` } });
     const duration = Math.round(performance.now() - startedAt);
     const payload = JSON.stringify(await response.json(), null, 2);
 
@@ -161,6 +188,10 @@ async function runDevDataAction(button, url, pendingDetail, successDetail, failu
   } finally {
     button.disabled = false;
   }
+}
+
+function isPublicPath(path) {
+  return path === "/" || path === "/health" || path === "/playground" || path.startsWith("/playground/");
 }
 
 async function resetAllData() {
