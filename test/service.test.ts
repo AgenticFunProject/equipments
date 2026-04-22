@@ -43,8 +43,16 @@ function authHeader(scopes: string[] = [Scope.READ, Scope.MODIFY], overrides: Pa
 
 function authHeaders(subject: string, issuer = "platform-auth") {
   return {
+    ...authHeader([Scope.MODIFY]),
     "x-auth-issuer": issuer,
     "x-auth-subject": subject
+  };
+}
+
+function partialActorHeaders(headers: Record<string, string>) {
+  return {
+    ...authHeader([Scope.MODIFY]),
+    ...headers
   };
 }
 
@@ -421,7 +429,7 @@ test("reservation and container writes reuse stable local user ids", async () =>
   const pickupBody = pickup.json() as { createdByUserId: string | null; lastModifiedByUserId: string | null };
   assert.equal(pickupBody.lastModifiedByUserId, reservationBody.createdByUserId);
 
-  const fetched = await app.inject({ method: "GET", url: `/containers/${containerId}` });
+  const fetched = await app.inject({ method: "GET", url: `/containers/${containerId}`, headers: authHeader([Scope.READ]) });
   assert.equal(fetched.statusCode, 200);
   const fetchedBody = fetched.json() as { createdByUserId: string | null; lastModifiedByUserId: string | null };
   assert.equal(fetchedBody.createdByUserId, null);
@@ -434,7 +442,7 @@ test("partial authenticated caller headers are rejected", async () => {
   const response = await app.inject({
     method: "POST",
     url: "/equipment-types",
-    headers: { "x-auth-issuer": "platform-auth" },
+    headers: partialActorHeaders({ "x-auth-issuer": "platform-auth" }),
     payload: {
       code: "45HC",
       description: "45-foot High Cube",

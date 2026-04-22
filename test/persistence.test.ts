@@ -20,6 +20,7 @@ import { createStoreFromRuntimeConfig } from "../src/store.js";
 
 function createSnapshot(): StoreSnapshot {
   return {
+    auditEvents: [],
     equipmentTypes: [
       {
         code: "45HC",
