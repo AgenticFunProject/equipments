@@ -23,6 +23,7 @@ The Equipments service is part of a larger ecosystem, so the first authorization
 - Validate token issuer, audience, expiry, and scopes
 - Keep the service stateless
 - Avoid introducing a local user database in the first version
+- Start with only two coarse service scopes: `equipments:read` and `equipments:modify`
 
 ### Why This Is A Good First Step
 
@@ -38,7 +39,6 @@ The Equipments service is part of a larger ecosystem, so the first authorization
 - `aud`: `equipments-service`
 - `exp`: expiry timestamp
 - `scope`: allowed actions
-- optional `depot_codes`: list of depots the caller may operate on
 - optional `customer_id`: customer identity for customer-facing calls
 
 ### Example Token Payload
@@ -48,39 +48,51 @@ The Equipments service is part of a larger ecosystem, so the first authorization
   "sub": "booking-service",
   "iss": "platform-auth",
   "aud": "equipments-service",
-  "scope": "availability:read reservations:create",
+  "scope": "equipments:read equipments:modify",
   "exp": 1770000000
 }
 ```
 
 ### Suggested Scopes
 
-- `availability:read`
-- `equipment-types:read`
-- `equipment-types:write`
-- `containers:read`
-- `containers:write`
-- `containers:override-status`
-- `reservations:create`
-- `reservations:release`
-- `forecast:read`
-- `allocation:read`
-- `allocation:manage`
-- `substitutions:read`
-- `substitutions:manage`
+- `equipments:read`
+- `equipments:modify`
+
+### Suggested Scope Mapping
+
+`equipments:read` should cover read-only routes such as:
+
+- `GET /availability`
+- `GET /equipment-types`
+- `GET /containers`
+- `GET /containers/{id}`
+- future forecast and read-only planning endpoints
+
+`equipments:modify` should cover write routes such as:
+
+- `POST /equipment-types`
+- `PUT /equipment-types/{code}`
+- `POST /containers`
+- `PATCH /containers/{id}/status`
+- `POST /reservations`
+- `DELETE /reservations/{bookingReference}`
+- `POST /containers/{id}/pickup`
+- `POST /containers/{id}/return`
+- `POST /events`
 
 ### Example Rules
 
-- `GET /availability` requires `availability:read`
-- `POST /reservations` requires `reservations:create`
-- `DELETE /reservations/{bookingReference}` requires `reservations:release`
-- `PATCH /containers/{id}/status` requires `containers:override-status`
-- depot-specific operations should respect `depot_codes` when present
+- `GET /health` should remain unauthenticated
+- read-only routes require `equipments:read`
+- write routes require `equipments:modify`
+- callers may carry both scopes when they need full access
 
 ### Future Expansion
 
 This can later grow into:
 
+- finer-grained endpoint scopes
+- depot-scoped restrictions
 - full role-based access control
 - user-specific audit logs
 - customer-specific booking policies
@@ -274,8 +286,7 @@ To keep scope controlled, implement these in stages.
 ### Stage 1
 
 - token-based API authorization
-- scopes per endpoint
-- optional depot restrictions
+- coarse `equipments:read` and `equipments:modify` scopes
 
 ### Stage 2
 
@@ -304,4 +315,4 @@ These five features work well together:
 - forecasting improves planning
 - allocation rules improve strategic inventory management
 
-The most important first move is token-based user/service authorization, because it provides the foundation for the rest. Audit logging is the next most natural step once caller identity is available.
+The most important first move is token-based user/service authorization with only `equipments:read` and `equipments:modify`, because that gives the ecosystem a simple integration surface and provides the foundation for the rest. Audit logging is the next most natural step once caller identity is available.
