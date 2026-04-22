@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { DomainError } from "./errors.js";
-import type { ContainerUnit, EquipmentType, Reservation } from "./types.js";
+import type { AuditEvent, ContainerUnit, EquipmentType, Reservation } from "./types.js";
 
 export const StorageBackend = {
   MEMORY: "memory",
@@ -19,6 +19,7 @@ export const STORAGE_SQLITE_PATH_ENV = "STORAGE_SQLITE_PATH";
 export const STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV = "STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT";
 
 export interface StoreSnapshot {
+  auditEvents: AuditEvent[];
   equipmentTypes: EquipmentType[];
   containers: ContainerUnit[];
   reservations: Reservation[];
@@ -161,6 +162,18 @@ class SqlitePersistence implements StorePersistence {
         initialized INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id TEXT PRIMARY KEY,
+        actor TEXT NOT NULL,
+        action TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        request_context TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        error_message TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS equipment_types (
         code TEXT PRIMARY KEY,
         description TEXT NOT NULL,
@@ -213,6 +226,27 @@ class SqlitePersistence implements StorePersistence {
       return null;
     }
 
+    const auditEvents = this.db
+      .prepare(
+        `SELECT
+          id,
+          actor,
+          action,
+          resource_type AS resourceType,
+          resource_id AS resourceId,
+          timestamp,
+          request_context AS requestContext,
+          outcome,
+          error_message AS errorMessage
+        FROM audit_events
+        ORDER BY timestamp, id`
+      )
+      .all()
+      .map((row) => ({
+        ...(row as Omit<AuditEvent, "requestContext"> & { requestContext: string }),
+        requestContext: JSON.parse((row as { requestContext: string }).requestContext) as AuditEvent["requestContext"]
+      }));
+
     const equipmentTypes = this.db
       .prepare(
         "SELECT code, description, nominal_length AS nominalLength, max_payload_kg AS maxPayloadKg FROM equipment_types ORDER BY code"
@@ -261,6 +295,7 @@ class SqlitePersistence implements StorePersistence {
     }
 
     return {
+      auditEvents,
       equipmentTypes,
       containers,
       reservations: reservations.map((reservation) => ({
@@ -273,6 +308,19 @@ class SqlitePersistence implements StorePersistence {
   save(snapshot: StoreSnapshot): void {
     const upsertMeta = this.db.prepare(
       "INSERT INTO store_meta (id, initialized) VALUES (1, 1) ON CONFLICT(id) DO UPDATE SET initialized = excluded.initialized"
+    );
+    const insertAuditEvent = this.db.prepare(
+      `INSERT INTO audit_events (
+        id,
+        actor,
+        action,
+        resource_type,
+        resource_id,
+        timestamp,
+        request_context,
+        outcome,
+        error_message
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertEquipmentType = this.db.prepare(
       "INSERT INTO equipment_types (code, description, nominal_length, max_payload_kg) VALUES (?, ?, ?, ?)"
@@ -300,8 +348,22 @@ class SqlitePersistence implements StorePersistence {
     try {
       upsertMeta.run();
       this.db.exec(
-        "DELETE FROM reservation_containers; DELETE FROM reservations; DELETE FROM containers; DELETE FROM equipment_types; DELETE FROM store_snapshots;"
+        "DELETE FROM audit_events; DELETE FROM reservation_containers; DELETE FROM reservations; DELETE FROM containers; DELETE FROM equipment_types; DELETE FROM store_snapshots;"
       );
+
+      for (const auditEvent of snapshot.auditEvents) {
+        insertAuditEvent.run(
+          auditEvent.id,
+          auditEvent.actor,
+          auditEvent.action,
+          auditEvent.resourceType,
+          auditEvent.resourceId,
+          auditEvent.timestamp,
+          JSON.stringify(auditEvent.requestContext),
+          auditEvent.outcome,
+          auditEvent.errorMessage
+        );
+      }
 
       for (const equipmentType of snapshot.equipmentTypes) {
         insertEquipmentType.run(
@@ -368,6 +430,7 @@ class SqlitePersistence implements StorePersistence {
 function parseSnapshot(raw: string): StoreSnapshot {
   const parsed = JSON.parse(raw) as Partial<StoreSnapshot>;
   return {
+    auditEvents: parsed.auditEvents ?? [],
     equipmentTypes: parsed.equipmentTypes ?? [],
     containers: parsed.containers ?? [],
     reservations: parsed.reservations ?? []

@@ -43,6 +43,29 @@ export interface Reservation {
   createdAt: string;
 }
 
+export type AuditValue = boolean | number | string | string[] | null;
+
+export type AuditContext = Record<string, AuditValue>;
+
+export const AuditOutcome = {
+  SUCCESS: "success",
+  FAILURE: "failure"
+} as const;
+
+export type AuditOutcome = (typeof AuditOutcome)[keyof typeof AuditOutcome];
+
+export interface AuditEvent {
+  id: string;
+  actor: string;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  timestamp: string;
+  requestContext: AuditContext;
+  outcome: AuditOutcome;
+  errorMessage: string | null;
+}
+
 export interface ReservationItemRequest {
   type: string;
   quantity: number;

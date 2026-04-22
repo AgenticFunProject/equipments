@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { DomainError } from "./errors.js";
 import { createPersistence, type RuntimeConfig, type StorePersistence, type StoreSnapshot } from "./persistence.js";
 import {
+  type AuditEvent,
   type ContainerUnit,
   ContainerStatus,
   type CreateReservationRequest,
@@ -18,6 +19,7 @@ interface ListContainersFilter {
 }
 
 export class EquipmentsStore {
+  private auditEvents: AuditEvent[] = [];
   private equipmentTypes = new Map<string, EquipmentType>();
   private containers = new Map<string, ContainerUnit>();
   private reservations = new Map<string, Reservation>();
@@ -49,6 +51,24 @@ export class EquipmentsStore {
 
   listEquipmentTypes(): EquipmentType[] {
     return Array.from(this.equipmentTypes.values());
+  }
+
+  listAuditEvents(): AuditEvent[] {
+    return this.auditEvents.map((event) => ({
+      ...event,
+      requestContext: { ...event.requestContext }
+    }));
+  }
+
+  recordAuditEvent(event: Omit<AuditEvent, "id">): AuditEvent {
+    const auditEvent: AuditEvent = {
+      id: randomUUID(),
+      ...event,
+      requestContext: { ...event.requestContext }
+    };
+    this.auditEvents.push(auditEvent);
+    this.persist();
+    return auditEvent;
   }
 
   createEquipmentType(input: EquipmentType): EquipmentType {
@@ -364,6 +384,10 @@ export class EquipmentsStore {
   }
 
   private restore(snapshot: StoreSnapshot): void {
+    this.auditEvents = snapshot.auditEvents.map((event) => ({
+      ...event,
+      requestContext: { ...event.requestContext }
+    }));
     this.equipmentTypes = new Map(snapshot.equipmentTypes.map((equipmentType) => [equipmentType.code, equipmentType]));
     this.containers = new Map(snapshot.containers.map((container) => [container.id, container]));
     this.reservations = new Map(snapshot.reservations.map((reservation) => [reservation.id, reservation]));
@@ -385,6 +409,7 @@ export class EquipmentsStore {
 
   private persist(): void {
     this.persistence?.save({
+      auditEvents: this.listAuditEvents(),
       equipmentTypes: this.listEquipmentTypes(),
       containers: Array.from(this.containers.values()),
       reservations: Array.from(this.reservations.values())

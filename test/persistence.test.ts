@@ -72,10 +72,22 @@ test("db backend persists store state across restarts", () => {
       nominalLength: "45'",
       maxPayloadKg: 29500
     });
+    storeA.recordAuditEvent({
+      actor: "ops-user",
+      action: "equipment_type.create",
+      resourceType: "equipment_type",
+      resourceId: "45HC",
+      timestamp: "2026-04-22T12:00:00.000Z",
+      requestContext: { code: "45HC" },
+      outcome: "success",
+      errorMessage: null
+    });
 
     const storeB = createStoreFromRuntimeConfig({ backend: StorageBackend.DB, path }, false);
     assert.equal(created.code, "45HC");
     assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
+    assert.equal(storeB.listAuditEvents().length, 1);
+    assert.equal(storeB.listAuditEvents()[0].actor, "ops-user");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -91,10 +103,22 @@ test("sqlite backend persists store state across restarts", () => {
       equipmentType: "20FT",
       currentDepot: "NLRTM-01"
     });
+    storeA.recordAuditEvent({
+      actor: "ops-user",
+      action: "container.register",
+      resourceType: "container",
+      resourceId: created.id,
+      timestamp: "2026-04-22T12:05:00.000Z",
+      requestContext: { containerNumber: "CONU9999999" },
+      outcome: "success",
+      errorMessage: null
+    });
 
     const storeB = createStoreFromRuntimeConfig({ backend: StorageBackend.SQLITE, path }, false);
     assert.equal(created.containerNumber, "CONU9999999");
     assert.ok(storeB.listContainers({ depot: "NLRTM-01" }).some((item) => item.containerNumber === "CONU9999999"));
+    assert.equal(storeB.listAuditEvents().length, 1);
+    assert.equal(storeB.listAuditEvents()[0].resourceId, created.id);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -128,6 +152,16 @@ test("sqlite backend stores state in relational tables", () => {
       originDepot: "NLRTM-01",
       equipment: [{ type: "45HC", quantity: 2 }]
     });
+    store.recordAuditEvent({
+      actor: "planner",
+      action: "reservation.create",
+      resourceType: "reservation",
+      resourceId: reservation.id,
+      timestamp: "2026-04-22T12:10:00.000Z",
+      requestContext: { bookingReference: "BOOK-45HC" },
+      outcome: "success",
+      errorMessage: null
+    });
 
     const db = new DatabaseSync(path);
     const meta = db.prepare("SELECT initialized FROM store_meta WHERE id = 1").get() as { initialized: number };
@@ -144,6 +178,10 @@ test("sqlite backend stores state in relational tables", () => {
         "SELECT container_id AS containerId FROM reservation_containers WHERE reservation_id = ? ORDER BY order_index"
       )
       .all(reservation.id) as Array<{ containerId: string }>;
+    const auditRow = db.prepare("SELECT actor, action FROM audit_events WHERE resource_id = ?").get(reservation.id) as {
+      actor: string;
+      action: string;
+    };
 
     assert.equal(meta.initialized, 1);
     assert.equal(equipmentTypeRow.code, "45HC");
@@ -151,6 +189,8 @@ test("sqlite backend stores state in relational tables", () => {
     assert.equal(containerCount.count, 2);
     assert.equal(reservationRow.bookingReference, "BOOK-45HC");
     assert.equal(reservationRow.originDepot, "NLRTM-01");
+    assert.equal(auditRow.actor, "planner");
+    assert.equal(auditRow.action, "reservation.create");
     assert.deepEqual(
       links.map((item) => item.containerId),
       [first.id, second.id]

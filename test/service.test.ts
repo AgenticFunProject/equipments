@@ -14,6 +14,14 @@ function createApp() {
   return buildServer(store, undefined, undefined, authConfig);
 }
 
+function createStoreAndApp(seed = true) {
+  const store = new EquipmentsStore(seed);
+  return {
+    store,
+    app: buildServer(store, undefined, undefined, authConfig)
+  };
+}
+
 function authHeader(scopes: string[] = [Scope.READ, Scope.MODIFY], overrides: Partial<{ sub: string; iss: string; aud: string | string[]; exp: number; scope: string }> = {}) {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
@@ -63,6 +71,69 @@ test("write routes reject read-only tokens", async () => {
 
   assert.equal(response.statusCode, 403);
   assert.deepEqual(response.json(), { error: `missing required scope ${Scope.MODIFY}` });
+});
+
+test("write routes record successful audit events", async () => {
+  const { app, store } = createStoreAndApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/reservations",
+    headers: authHeader([Scope.MODIFY], { sub: "booking-service" }),
+    payload: {
+      bookingReference: "BKG-AUDIT-1",
+      originDepot: "CNSHA-01",
+      equipment: [{ type: "20FT", quantity: 1 }]
+    }
+  });
+
+  assert.equal(response.statusCode, 201);
+  const events = store.listAuditEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].actor, "booking-service");
+  assert.equal(events[0].action, "reservation.create");
+  assert.equal(events[0].resourceType, "reservation");
+  assert.equal(events[0].resourceId, (response.json() as { reservationId: string }).reservationId);
+  assert.deepEqual(events[0].requestContext, {
+    bookingReference: "BKG-AUDIT-1",
+    originDepot: "CNSHA-01",
+    equipment: ["20FT:1"]
+  });
+  assert.equal(events[0].outcome, "success");
+  assert.equal(events[0].errorMessage, null);
+});
+
+test("failed write routes record failed audit events", async () => {
+  const { app, store } = createStoreAndApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/equipment-types",
+    headers: authHeader([Scope.MODIFY], { sub: "ops-user" }),
+    payload: {
+      code: "20FT",
+      description: "Duplicate",
+      nominalLength: "20'",
+      maxPayloadKg: 1
+    }
+  });
+
+  assert.equal(response.statusCode, 409);
+  const events = store.listAuditEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].actor, "ops-user");
+  assert.equal(events[0].action, "equipment_type.create");
+  assert.equal(events[0].resourceType, "equipment_type");
+  assert.equal(events[0].resourceId, "20FT");
+  assert.deepEqual(events[0].requestContext, { code: "20FT" });
+  assert.equal(events[0].outcome, "failure");
+  assert.match(events[0].errorMessage ?? "", /already exists/);
+});
+
+test("read routes do not emit audit events", async () => {
+  const { app, store } = createStoreAndApp();
+  const response = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(store.listAuditEvents(), []);
 });
 
 test("GET / redirects to the API playground", async () => {
