@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 
 import { authenticateBearerToken, createBearerToken, type AuthenticatedCaller, type BearerAuthConfig, ensureScope, loadBearerAuthConfig, Scope } from "./auth.js";
 import { DomainError } from "./errors.js";
-import { type RuntimeConfig, StorageBackend } from "./persistence.js";
+import { type RuntimeConfig, StorageBackend } from "./persistence/index.js";
 import { getPlaygroundScript, getPlaygroundStyle, renderApiPlayground } from "./playground.js";
 import { EquipmentsStore } from "./store.js";
 import { AuditOutcome, type AuditContext } from "./types.js";

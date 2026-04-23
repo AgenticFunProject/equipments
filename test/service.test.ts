@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import { type BearerAuthConfig, loadBearerAuthConfig, Scope } from "../src/auth.js";
-import { StorageBackend } from "../src/persistence.js";
+import { StorageBackend } from "../src/persistence/index.js";
 import { buildServer } from "../src/server.js";
 import { EquipmentsStore } from "../src/store.js";
 import { SERVICE_VERSION } from "../src/version.js";
