@@ -17,6 +17,7 @@ export const STORAGE_BACKEND_ENV = "STORAGE_BACKEND";
 export const STORAGE_DB_PATH_ENV = "STORAGE_DB_PATH";
 export const STORAGE_SQLITE_PATH_ENV = "STORAGE_SQLITE_PATH";
 export const STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV = "STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT";
+export const SQLITE_SCHEMA_VERSION = 3;
 
 export interface StoreSnapshot {
   auditEvents: AuditEvent[];
@@ -157,86 +158,7 @@ class SqlitePersistence implements StorePersistence {
   constructor(private readonly path: string) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS store_meta (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        initialized INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS audit_events (
-        id TEXT PRIMARY KEY,
-        actor TEXT NOT NULL,
-        action TEXT NOT NULL,
-        resource_type TEXT NOT NULL,
-        resource_id TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        request_context TEXT NOT NULL,
-        outcome TEXT NOT NULL,
-        error_message TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS equipment_types (
-        code TEXT PRIMARY KEY,
-        description TEXT NOT NULL,
-        nominal_length TEXT NOT NULL,
-        max_payload_kg REAL NOT NULL,
-        created_by_user_id TEXT,
-        last_modified_by_user_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        issuer TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        UNIQUE (issuer, subject)
-      );
-
-      CREATE TABLE IF NOT EXISTS containers (
-        id TEXT PRIMARY KEY,
-        container_number TEXT NOT NULL UNIQUE,
-        equipment_type TEXT NOT NULL,
-        status TEXT NOT NULL,
-        current_depot TEXT NOT NULL,
-        booking_reference TEXT,
-        created_by_user_id TEXT,
-        last_modified_by_user_id TEXT,
-        last_moved_at TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (equipment_type) REFERENCES equipment_types(code)
-      );
-
-      CREATE TABLE IF NOT EXISTS reservations (
-        id TEXT PRIMARY KEY,
-        booking_reference TEXT NOT NULL UNIQUE,
-        origin_depot TEXT NOT NULL,
-        status TEXT NOT NULL,
-        created_by_user_id TEXT,
-        last_modified_by_user_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS reservation_containers (
-        reservation_id TEXT NOT NULL,
-        container_id TEXT NOT NULL,
-        order_index INTEGER NOT NULL,
-        PRIMARY KEY (reservation_id, container_id),
-        FOREIGN KEY (reservation_id) REFERENCES reservations(id) ON DELETE CASCADE,
-        FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS store_snapshots (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        state TEXT NOT NULL
-      );
-    `);
-    this.ensureAuditMetadataColumns();
-    this.backfillAuditMetadata();
-    this.migrateLegacySnapshot();
+    this.applyMigrations();
   }
 
   load(): StoreSnapshot | null {
@@ -503,6 +425,114 @@ class SqlitePersistence implements StorePersistence {
     }
 
     this.save(parseSnapshot(legacy.state));
+  }
+
+  private applyMigrations(): void {
+    const currentVersion = this.getSchemaVersion();
+    if (currentVersion > SQLITE_SCHEMA_VERSION) {
+      throw new DomainError(
+        `sqlite schema version ${currentVersion} is newer than supported version ${SQLITE_SCHEMA_VERSION}`,
+        500
+      );
+    }
+
+    for (let version = currentVersion + 1; version <= SQLITE_SCHEMA_VERSION; version += 1) {
+      this.runMigration(version);
+      this.setSchemaVersion(version);
+    }
+  }
+
+  private runMigration(version: number): void {
+    switch (version) {
+      case 1:
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS store_meta (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            initialized INTEGER NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS equipment_types (
+            code TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            nominal_length TEXT NOT NULL,
+            max_payload_kg REAL NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS containers (
+            id TEXT PRIMARY KEY,
+            container_number TEXT NOT NULL UNIQUE,
+            equipment_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_depot TEXT NOT NULL,
+            booking_reference TEXT,
+            last_moved_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (equipment_type) REFERENCES equipment_types(code)
+          );
+
+          CREATE TABLE IF NOT EXISTS reservations (
+            id TEXT PRIMARY KEY,
+            booking_reference TEXT NOT NULL UNIQUE,
+            origin_depot TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS reservation_containers (
+            reservation_id TEXT NOT NULL,
+            container_id TEXT NOT NULL,
+            order_index INTEGER NOT NULL,
+            PRIMARY KEY (reservation_id, container_id),
+            FOREIGN KEY (reservation_id) REFERENCES reservations(id) ON DELETE CASCADE,
+            FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE
+          );
+
+          CREATE TABLE IF NOT EXISTS store_snapshots (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            state TEXT NOT NULL
+          );
+        `);
+        return;
+      case 2:
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS audit_events (
+            id TEXT PRIMARY KEY,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            resource_type TEXT NOT NULL,
+            resource_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            request_context TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            error_message TEXT
+          );
+
+          CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            issuer TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (issuer, subject)
+          );
+        `);
+        return;
+      case 3:
+        this.ensureAuditMetadataColumns();
+        this.backfillAuditMetadata();
+        this.migrateLegacySnapshot();
+        return;
+      default:
+        throw new DomainError(`unsupported sqlite migration ${version}`, 500);
+    }
+  }
+
+  private getSchemaVersion(): number {
+    const row = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
+    return row.user_version;
+  }
+
+  private setSchemaVersion(version: number): void {
+    this.db.exec(`PRAGMA user_version = ${version}`);
   }
 
   private ensureAuditMetadataColumns(): void {

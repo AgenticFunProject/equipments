@@ -9,6 +9,7 @@ import {
   createPersistence,
   loadRuntimeConfig,
   normalizeBackend,
+  SQLITE_SCHEMA_VERSION,
   STORAGE_BACKEND_ENV,
   STORAGE_DB_PATH_ENV,
   STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV,
@@ -243,6 +244,7 @@ test("sqlite backend stores state in relational tables", () => {
     });
 
     const db = new DatabaseSync(path);
+    const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
     const meta = db.prepare("SELECT initialized FROM store_meta WHERE id = 1").get() as { initialized: number };
     const equipmentTypeRow = db.prepare("SELECT code, description FROM equipment_types WHERE code = ?").get("45HC") as {
       code: string;
@@ -262,6 +264,7 @@ test("sqlite backend stores state in relational tables", () => {
       action: string;
     };
 
+    assert.equal(userVersion.user_version, SQLITE_SCHEMA_VERSION);
     assert.equal(meta.initialized, 1);
     assert.equal(equipmentTypeRow.code, "45HC");
     assert.equal(equipmentTypeRow.description, "45-foot High Cube");
@@ -400,6 +403,105 @@ test("sqlite backend can start empty on first boot", () => {
       true
     );
     assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("sqlite backend migrates older schema versions forward", () => {
+  const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-migrate-"));
+  try {
+    const path = join(dir, "equipments.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec(`
+      PRAGMA user_version = 1;
+
+      CREATE TABLE store_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        initialized INTEGER NOT NULL
+      );
+
+      CREATE TABLE equipment_types (
+        code TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        nominal_length TEXT NOT NULL,
+        max_payload_kg REAL NOT NULL
+      );
+
+      CREATE TABLE containers (
+        id TEXT PRIMARY KEY,
+        container_number TEXT NOT NULL UNIQUE,
+        equipment_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        current_depot TEXT NOT NULL,
+        booking_reference TEXT,
+        last_moved_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (equipment_type) REFERENCES equipment_types(code)
+      );
+
+      CREATE TABLE reservations (
+        id TEXT PRIMARY KEY,
+        booking_reference TEXT NOT NULL UNIQUE,
+        origin_depot TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE reservation_containers (
+        reservation_id TEXT NOT NULL,
+        container_id TEXT NOT NULL,
+        order_index INTEGER NOT NULL,
+        PRIMARY KEY (reservation_id, container_id)
+      );
+
+      CREATE TABLE store_snapshots (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        state TEXT NOT NULL
+      );
+
+      INSERT INTO store_meta (id, initialized) VALUES (1, 1);
+      INSERT INTO equipment_types (code, description, nominal_length, max_payload_kg) VALUES ('20FT', 'Twenty foot', '20''', 28200);
+      INSERT INTO containers (id, container_number, equipment_type, status, current_depot, booking_reference, last_moved_at, created_at)
+      VALUES ('ctr-1', 'CONU1234567', '20FT', 'AVAILABLE', 'CNSHA-01', NULL, '2026-04-22T00:10:00.000Z', '2026-04-22T00:00:00.000Z');
+      INSERT INTO reservations (id, booking_reference, origin_depot, status, created_at)
+      VALUES ('res-1', 'BKG-1', 'CNSHA-01', 'ACTIVE', '2026-04-22T00:20:00.000Z');
+    `);
+
+    createPersistence({ backend: StorageBackend.SQLITE, path });
+
+    const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
+    const usersTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").get() as { name: string };
+    const auditTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'").get() as { name: string };
+    const equipmentColumns = db.prepare("PRAGMA table_info(equipment_types)").all() as Array<{ name: string }>;
+    const containerColumns = db.prepare("PRAGMA table_info(containers)").all() as Array<{ name: string }>;
+    const reservationColumns = db.prepare("PRAGMA table_info(reservations)").all() as Array<{ name: string }>;
+
+    assert.equal(userVersion.user_version, SQLITE_SCHEMA_VERSION);
+    assert.equal(usersTable.name, "users");
+    assert.equal(auditTable.name, "audit_events");
+    assert.ok(equipmentColumns.some((column) => column.name === "created_by_user_id"));
+    assert.ok(equipmentColumns.some((column) => column.name === "updated_at"));
+    assert.ok(containerColumns.some((column) => column.name === "last_modified_by_user_id"));
+    assert.ok(containerColumns.some((column) => column.name === "updated_at"));
+    assert.ok(reservationColumns.some((column) => column.name === "last_modified_by_user_id"));
+    assert.ok(reservationColumns.some((column) => column.name === "updated_at"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("sqlite backend rejects unsupported future schema versions", () => {
+  const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-future-"));
+  try {
+    const path = join(dir, "equipments.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec(`PRAGMA user_version = ${SQLITE_SCHEMA_VERSION + 1}`);
+
+    assert.throws(
+      () => createPersistence({ backend: StorageBackend.SQLITE, path }),
+      new RegExp(`sqlite schema version ${SQLITE_SCHEMA_VERSION + 1} is newer than supported version ${SQLITE_SCHEMA_VERSION}`)
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
