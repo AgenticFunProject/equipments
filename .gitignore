@@ -62,6 +62,7 @@ backup/
 .opencode/
 .runtime/
 dist/
+node_modules/
 
 # Legacy files (from pre-Dolt versions)
 *.db
