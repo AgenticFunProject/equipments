@@ -1,6 +1,6 @@
 import { loadBearerAuthConfig } from "./auth.js";
 import { buildServer } from "./server.js";
-import { loadRuntimeConfig } from "./persistence.js";
+import { loadRuntimeConfig } from "./persistence/index.js";
 import { createStoreFromRuntimeConfig } from "./store.js";
 
 const config = loadRuntimeConfig();

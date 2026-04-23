@@ -15,8 +15,8 @@ import {
   STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV,
   STORAGE_SQLITE_PATH_ENV,
   StorageBackend
-} from "../src/persistence.js";
-import type { StoreSnapshot } from "../src/persistence.js";
+} from "../src/persistence/index.js";
+import type { StoreSnapshot } from "../src/persistence/index.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
 
 function createSnapshot(): StoreSnapshot {

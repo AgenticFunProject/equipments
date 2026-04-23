@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import type { RuntimeConfig } from "./persistence.js";
+import type { RuntimeConfig } from "./persistence/index.js";
 
 const playgroundHtmlTemplate = readFileSync(new URL("./playground/index.html", import.meta.url), "utf8");
 const playgroundStyle = readFileSync(new URL("./playground/playground.css", import.meta.url), "utf8");

@@ -8,7 +8,7 @@ import test from "node:test";
 import type { FastifyInstance } from "fastify";
 
 import { loadBearerAuthConfig, Scope } from "../src/auth.js";
-import { StorageBackend } from "../src/persistence.js";
+import { StorageBackend } from "../src/persistence/index.js";
 import { buildServer } from "../src/server.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
 

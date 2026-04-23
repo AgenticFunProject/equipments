@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { DomainError } from "./errors.js";
-import { createPersistence, type RuntimeConfig, type StorePersistence, type StoreSnapshot } from "./persistence.js";
+import { createPersistence, type RuntimeConfig, type StorePersistence, type StoreSnapshot } from "./persistence/index.js";
 import {
   type AuditEvent,
   type ContainerUnit,
