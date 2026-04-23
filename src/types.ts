@@ -21,6 +21,17 @@ export interface EquipmentType {
   description: string;
   nominalLength: string;
   maxPayloadKg: number;
+  createdByUserId: string | null;
+  lastModifiedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LocalUser {
+  id: string;
+  issuer: string;
+  subject: string;
+  createdAt: string;
 }
 
 export interface ContainerUnit {
@@ -30,8 +41,11 @@ export interface ContainerUnit {
   status: ContainerStatus;
   currentDepot: string;
   bookingReference: string | null;
+  createdByUserId: string | null;
+  lastModifiedByUserId: string | null;
   lastMovedAt: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface Reservation {
@@ -40,7 +54,33 @@ export interface Reservation {
   originDepot: string;
   containers: string[];
   status: ReservationStatus;
+  createdByUserId: string | null;
+  lastModifiedByUserId: string | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export type AuditValue = boolean | number | string | string[] | null;
+
+export type AuditContext = Record<string, AuditValue>;
+
+export const AuditOutcome = {
+  SUCCESS: "success",
+  FAILURE: "failure"
+} as const;
+
+export type AuditOutcome = (typeof AuditOutcome)[keyof typeof AuditOutcome];
+
+export interface AuditEvent {
+  id: string;
+  actor: string;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  timestamp: string;
+  requestContext: AuditContext;
+  outcome: AuditOutcome;
+  errorMessage: string | null;
 }
 
 export interface ReservationItemRequest {

@@ -126,6 +126,14 @@ AVAILABLE → RESERVED → DISPATCHED ──┬──→ RETURNED → AVAILABLE
 | status | enum | ACTIVE, RELEASED |
 | createdAt | timestamp | |
 
+### Local User
+| Field | Type | Notes |
+|-------|------|-------|
+| id | UUID-like string | Stable local user identifier for future record metadata |
+| issuer | string | Token issuer or identity namespace |
+| subject | string | External caller subject within the issuer |
+| createdAt | timestamp | When the local mapping was created |
+
 ## Business Rules
 - Reservations are created atomically — either all requested units are reserved or the request fails
 - Released reservations (cancelled bookings) return containers to AVAILABLE immediately
@@ -169,9 +177,40 @@ npm run dev
 
 Service starts on `http://0.0.0.0:3000` by default.
 
-Open `http://localhost:3000/playground` for a lightweight browser playground with
-preset requests, editable JSON bodies, inline response output for manual API testing,
-and dev-only data controls for either restoring the seeded baseline or clearing the service to empty.
+`GET /health` remains unauthenticated. All other routes require `Authorization: Bearer <token>`.
+
+Bearer token configuration is driven by these environment variables:
+
+- `AUTH_JWT_ISSUER` defaults to `platform-auth`
+- `AUTH_JWT_AUDIENCE` defaults to `equipments-service`
+- `AUTH_JWT_SECRET` defaults to `equipments-dev-secret`
+
+For local development, you can mint a compatible HS256 token with Node:
+
+```bash
+TOKEN=$(node --input-type=module <<'EOF'
+import { createHmac } from "node:crypto";
+
+const secret = process.env.AUTH_JWT_SECRET || "equipments-dev-secret";
+const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+const payload = Buffer.from(
+  JSON.stringify({
+    sub: "local-dev",
+    iss: process.env.AUTH_JWT_ISSUER || "platform-auth",
+    aud: process.env.AUTH_JWT_AUDIENCE || "equipments-service",
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    scope: "equipments:read equipments:modify"
+  })
+).toString("base64url");
+const signature = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
+process.stdout.write(`${header}.${payload}.${signature}`);
+EOF
+)
+```
+
+Then call protected routes with `-H "Authorization: Bearer $TOKEN"`.
+
+The browser playground stays publicly reachable so you can paste a bearer token into the UI before sending protected requests. It also calls out that `GET /health` is public while read routes need `equipments:read` and write routes need `equipments:modify`.
 
 The dev-only data actions are only exposed when `NODE_ENV` is not `production`:
 
@@ -212,6 +251,12 @@ For a full API walkthrough that starts from an empty database and creates all de
 
 - `POST /dev/reset-all-data` - clears service state and restores the seeded baseline for local testing
 - `POST /dev/clear-all-data` - clears service state and leaves the service empty for local testing
+
+### Bearer Auth Scopes
+
+- `equipments:read` is required for `GET` and `HEAD` routes other than `/health`
+- `equipments:modify` is required for write routes such as `POST`, `PUT`, `PATCH`, and `DELETE`
+- callers can carry both scopes in a single token for full API access
 
 ### Runtime Storage Backends
 

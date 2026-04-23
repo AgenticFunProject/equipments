@@ -3,13 +3,20 @@ import { randomUUID } from "node:crypto";
 import { DomainError } from "./errors.js";
 import { createPersistence, type RuntimeConfig, type StorePersistence, type StoreSnapshot } from "./persistence.js";
 import {
+  type AuditEvent,
   type ContainerUnit,
   ContainerStatus,
   type CreateReservationRequest,
   type EquipmentType,
+  type LocalUser,
   type Reservation,
   ReservationStatus
 } from "./types.js";
+
+interface ActorIdentity {
+  issuer: string;
+  subject: string;
+}
 
 interface ListContainersFilter {
   type?: string;
@@ -18,7 +25,9 @@ interface ListContainersFilter {
 }
 
 export class EquipmentsStore {
+  private auditEvents: AuditEvent[] = [];
   private equipmentTypes = new Map<string, EquipmentType>();
+  private users = new Map<string, LocalUser>();
   private containers = new Map<string, ContainerUnit>();
   private reservations = new Map<string, Reservation>();
   private reservationByBooking = new Map<string, string>();
@@ -51,7 +60,25 @@ export class EquipmentsStore {
     return Array.from(this.equipmentTypes.values());
   }
 
-  createEquipmentType(input: EquipmentType): EquipmentType {
+  listAuditEvents(): AuditEvent[] {
+    return this.auditEvents.map((event) => ({
+      ...event,
+      requestContext: { ...event.requestContext }
+    }));
+  }
+
+  recordAuditEvent(event: Omit<AuditEvent, "id">): AuditEvent {
+    const auditEvent: AuditEvent = {
+      id: randomUUID(),
+      ...event,
+      requestContext: { ...event.requestContext }
+    };
+    this.auditEvents.push(auditEvent);
+    this.persist();
+    return auditEvent;
+  }
+
+  createEquipmentType(input: Omit<EquipmentType, "createdByUserId" | "lastModifiedByUserId" | "createdAt" | "updatedAt">, actor?: ActorIdentity): EquipmentType {
     const code = input.code.trim().toUpperCase();
     if (!code) {
       throw new DomainError("equipment type code is required");
@@ -60,11 +87,17 @@ export class EquipmentsStore {
       throw new DomainError(`equipment type ${code} already exists`, 409);
     }
 
+    const now = new Date().toISOString();
+    const actorUserId = this.findOrCreateUserId(actor);
     const equipmentType: EquipmentType = {
       code,
       description: input.description.trim(),
       nominalLength: input.nominalLength.trim(),
-      maxPayloadKg: input.maxPayloadKg
+      maxPayloadKg: input.maxPayloadKg,
+      createdByUserId: actorUserId,
+      lastModifiedByUserId: actorUserId,
+      createdAt: now,
+      updatedAt: now
     };
     this.validateEquipmentType(equipmentType);
     this.equipmentTypes.set(code, equipmentType);
@@ -72,18 +105,27 @@ export class EquipmentsStore {
     return equipmentType;
   }
 
-  updateEquipmentType(code: string, input: Partial<EquipmentType>): EquipmentType {
+  updateEquipmentType(
+    code: string,
+    input: Partial<Omit<EquipmentType, "code" | "createdByUserId" | "lastModifiedByUserId" | "createdAt" | "updatedAt">>,
+    actor?: ActorIdentity
+  ): EquipmentType {
     const key = code.trim().toUpperCase();
     const current = this.equipmentTypes.get(key);
     if (!current) {
       throw new DomainError(`equipment type ${key} not found`, 404);
     }
 
+    const now = new Date().toISOString();
     const next: EquipmentType = {
       code: current.code,
       description: input.description?.trim() ?? current.description,
       nominalLength: input.nominalLength?.trim() ?? current.nominalLength,
-      maxPayloadKg: input.maxPayloadKg ?? current.maxPayloadKg
+      maxPayloadKg: input.maxPayloadKg ?? current.maxPayloadKg,
+      createdByUserId: current.createdByUserId,
+      lastModifiedByUserId: this.findOrCreateUserId(actor),
+      createdAt: current.createdAt,
+      updatedAt: now
     };
     this.validateEquipmentType(next);
     this.equipmentTypes.set(key, next);
@@ -95,7 +137,7 @@ export class EquipmentsStore {
     containerNumber: string;
     equipmentType: string;
     currentDepot: string;
-  }): ContainerUnit {
+  }, actor?: ActorIdentity): ContainerUnit {
     const equipmentType = input.equipmentType.trim().toUpperCase();
     if (!this.equipmentTypes.has(equipmentType)) {
       throw new DomainError(`unknown equipment type ${equipmentType}`);
@@ -111,6 +153,7 @@ export class EquipmentsStore {
     }
 
     const now = new Date().toISOString();
+    const actorUserId = this.findOrCreateUserId(actor);
     const container: ContainerUnit = {
       id: randomUUID(),
       containerNumber,
@@ -118,8 +161,11 @@ export class EquipmentsStore {
       status: ContainerStatus.AVAILABLE,
       currentDepot: input.currentDepot.trim().toUpperCase(),
       bookingReference: null,
+      createdByUserId: actorUserId,
+      lastModifiedByUserId: actorUserId,
       lastMovedAt: now,
-      createdAt: now
+      createdAt: now,
+      updatedAt: now
     };
     this.containers.set(container.id, container);
     this.persist();
@@ -149,14 +195,17 @@ export class EquipmentsStore {
     return container;
   }
 
-  overrideContainerStatus(id: string, status: string): ContainerUnit {
+  overrideContainerStatus(id: string, status: string, actor?: ActorIdentity): ContainerUnit {
     const container = this.getContainer(id);
     const normalized = status.trim().toUpperCase();
     if (!Object.values(ContainerStatus).includes(normalized as typeof ContainerStatus[keyof typeof ContainerStatus])) {
       throw new DomainError(`invalid container status ${normalized}`);
     }
+    const now = new Date().toISOString();
     container.status = normalized as ContainerUnit["status"];
-    container.lastMovedAt = new Date().toISOString();
+    container.lastMovedAt = now;
+    container.lastModifiedByUserId = this.findOrCreateUserId(actor);
+    container.updatedAt = now;
     if (container.status === ContainerStatus.AVAILABLE) {
       container.bookingReference = null;
     }
@@ -188,7 +237,7 @@ export class EquipmentsStore {
     });
   }
 
-  createReservation(request: CreateReservationRequest): {
+  createReservation(request: CreateReservationRequest, actor?: ActorIdentity): {
     reservation: Reservation;
     assignedContainers: Array<{ containerId: string; type: string }>;
   } {
@@ -207,6 +256,8 @@ export class EquipmentsStore {
       throw new DomainError(`booking ${bookingReference} already has a reservation`, 409);
     }
 
+    const now = new Date().toISOString();
+    const actorUserId = this.findOrCreateUserId(actor);
     const assignmentPlan: ContainerUnit[] = [];
     for (const item of request.equipment) {
       const type = item.type.trim().toUpperCase();
@@ -234,7 +285,9 @@ export class EquipmentsStore {
     for (const container of assignmentPlan) {
       container.status = ContainerStatus.RESERVED;
       container.bookingReference = bookingReference;
-      container.lastMovedAt = new Date().toISOString();
+      container.lastModifiedByUserId = actorUserId;
+      container.lastMovedAt = now;
+      container.updatedAt = now;
     }
 
     const reservation: Reservation = {
@@ -243,7 +296,10 @@ export class EquipmentsStore {
       originDepot,
       containers: assignmentPlan.map((container) => container.id),
       status: ReservationStatus.ACTIVE,
-      createdAt: new Date().toISOString()
+      createdByUserId: actorUserId,
+      lastModifiedByUserId: actorUserId,
+      createdAt: now,
+      updatedAt: now
     };
     this.reservations.set(reservation.id, reservation);
     this.reservationByBooking.set(bookingReference, reservation.id);
@@ -258,7 +314,7 @@ export class EquipmentsStore {
     };
   }
 
-  releaseReservationByBooking(bookingReference: string): Reservation {
+  releaseReservationByBooking(bookingReference: string, actor?: ActorIdentity): Reservation {
     const reservationId = this.reservationByBooking.get(bookingReference);
     if (!reservationId) {
       throw new DomainError(`reservation for booking ${bookingReference} not found`, 404);
@@ -281,51 +337,63 @@ export class EquipmentsStore {
       }
     }
 
+    const now = new Date().toISOString();
+    const actorUserId = this.findOrCreateUserId(actor);
     for (const containerId of reservation.containers) {
       const container = this.getContainer(containerId);
       if (container.status === ContainerStatus.RESERVED) {
         container.status = ContainerStatus.AVAILABLE;
         container.bookingReference = null;
-        container.lastMovedAt = new Date().toISOString();
+        container.lastModifiedByUserId = actorUserId;
+        container.lastMovedAt = now;
+        container.updatedAt = now;
       }
     }
 
     reservation.status = ReservationStatus.RELEASED;
+    reservation.lastModifiedByUserId = actorUserId;
+    reservation.updatedAt = now;
     this.persist();
     return reservation;
   }
 
-  pickupContainer(id: string): ContainerUnit {
+  pickupContainer(id: string, actor?: ActorIdentity): ContainerUnit {
     const container = this.getContainer(id);
     if (container.status !== ContainerStatus.RESERVED) {
       throw new DomainError("pickup allowed only when status is RESERVED", 409);
     }
+    const now = new Date().toISOString();
     container.status = ContainerStatus.DISPATCHED;
-    container.lastMovedAt = new Date().toISOString();
+    container.lastModifiedByUserId = this.findOrCreateUserId(actor);
+    container.lastMovedAt = now;
+    container.updatedAt = now;
     this.persist();
     return container;
   }
 
-  returnContainer(id: string): ContainerUnit {
+  returnContainer(id: string, actor?: ActorIdentity): ContainerUnit {
     const container = this.getContainer(id);
     if (container.status !== ContainerStatus.DISPATCHED && container.status !== ContainerStatus.IN_TRANSIT) {
       throw new DomainError("return allowed only when status is DISPATCHED or IN_TRANSIT", 409);
     }
+    const now = new Date().toISOString();
     container.status = ContainerStatus.AVAILABLE;
     container.bookingReference = null;
-    container.lastMovedAt = new Date().toISOString();
+    container.lastModifiedByUserId = this.findOrCreateUserId(actor);
+    container.lastMovedAt = now;
+    container.updatedAt = now;
     this.persist();
     return container;
   }
 
-  consumeEvent(eventType: string, payload: { bookingReference: string }): { processed: boolean } {
+  consumeEvent(eventType: string, payload: { bookingReference: string }, actor?: ActorIdentity): { processed: boolean } {
     const bookingReference = payload.bookingReference?.trim();
     if (!bookingReference) {
       throw new DomainError("bookingReference is required in event payload");
     }
 
     if (eventType === "booking.cancelled") {
-      this.releaseReservationByBooking(bookingReference);
+      this.releaseReservationByBooking(bookingReference, actor);
       return { processed: true };
     }
 
@@ -341,7 +409,7 @@ export class EquipmentsStore {
       for (const containerId of reservation.containers) {
         const container = this.getContainer(containerId);
         if (container.status === ContainerStatus.DISPATCHED || container.status === ContainerStatus.IN_TRANSIT) {
-          this.returnContainer(container.id);
+          this.returnContainer(container.id, actor);
         }
       }
       this.persist();
@@ -364,7 +432,12 @@ export class EquipmentsStore {
   }
 
   private restore(snapshot: StoreSnapshot): void {
+    this.auditEvents = snapshot.auditEvents.map((event) => ({
+      ...event,
+      requestContext: { ...event.requestContext }
+    }));
     this.equipmentTypes = new Map(snapshot.equipmentTypes.map((equipmentType) => [equipmentType.code, equipmentType]));
+    this.users = new Map(snapshot.users.map((user) => [user.id, user]));
     this.containers = new Map(snapshot.containers.map((container) => [container.id, container]));
     this.reservations = new Map(snapshot.reservations.map((reservation) => [reservation.id, reservation]));
     this.reservationByBooking = new Map(snapshot.reservations.map((reservation) => [reservation.bookingReference, reservation.id]));
@@ -372,6 +445,7 @@ export class EquipmentsStore {
 
   private initializeState(seed = this.seedDefaults): void {
     this.equipmentTypes = new Map();
+    this.users = new Map();
     this.containers = new Map();
     this.reservations = new Map();
     this.reservationByBooking = new Map();
@@ -385,14 +459,17 @@ export class EquipmentsStore {
 
   private persist(): void {
     this.persistence?.save({
+      auditEvents: this.listAuditEvents(),
       equipmentTypes: this.listEquipmentTypes(),
+      users: Array.from(this.users.values()),
       containers: Array.from(this.containers.values()),
       reservations: Array.from(this.reservations.values())
     });
   }
 
   private seedData(): void {
-    const equipmentTypes: EquipmentType[] = [
+    const now = new Date().toISOString();
+    const equipmentTypes: Array<Omit<EquipmentType, "createdByUserId" | "lastModifiedByUserId" | "createdAt" | "updatedAt">> = [
       {
         code: "20FT",
         description: "Standard 20-foot dry container",
@@ -426,7 +503,13 @@ export class EquipmentsStore {
     ];
 
     for (const equipmentType of equipmentTypes) {
-      this.equipmentTypes.set(equipmentType.code, equipmentType);
+      this.equipmentTypes.set(equipmentType.code, {
+        ...equipmentType,
+        createdByUserId: null,
+        lastModifiedByUserId: null,
+        createdAt: now,
+        updatedAt: now
+      });
     }
 
     const seedContainers = [
@@ -438,7 +521,6 @@ export class EquipmentsStore {
       { containerNumber: "CONU4000001", equipmentType: "40HC", currentDepot: "CNSHA-01" }
     ];
 
-    const now = new Date().toISOString();
     for (const container of seedContainers) {
       const id = randomUUID();
       this.containers.set(id, {
@@ -448,10 +530,35 @@ export class EquipmentsStore {
         status: ContainerStatus.AVAILABLE,
         currentDepot: container.currentDepot,
         bookingReference: null,
+        createdByUserId: null,
+        lastModifiedByUserId: null,
         lastMovedAt: now,
-        createdAt: now
+        createdAt: now,
+        updatedAt: now
       });
     }
+  }
+
+  private findOrCreateUserId(actor?: ActorIdentity): string | null {
+    const issuer = actor?.issuer.trim();
+    const subject = actor?.subject.trim();
+    if (!issuer || !subject) {
+      return null;
+    }
+
+    const existing = Array.from(this.users.values()).find((user) => user.issuer === issuer && user.subject === subject);
+    if (existing) {
+      return existing.id;
+    }
+
+    const user: LocalUser = {
+      id: `usr-${randomUUID()}`,
+      issuer,
+      subject,
+      createdAt: new Date().toISOString()
+    };
+    this.users.set(user.id, user);
+    return user.id;
   }
 }
 

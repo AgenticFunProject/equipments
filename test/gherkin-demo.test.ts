@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,9 +7,12 @@ import test from "node:test";
 
 import type { FastifyInstance } from "fastify";
 
+import { loadBearerAuthConfig, Scope } from "../src/auth.js";
 import { StorageBackend } from "../src/persistence.js";
 import { buildServer } from "../src/server.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
+
+const authConfig = loadBearerAuthConfig({});
 
 interface DemoState {
   app: FastifyInstance | null;
@@ -71,9 +75,29 @@ async function runStep(step: string, state: DemoState): Promise<void> {
 
 async function request(state: DemoState, method: string, url: string, payload?: unknown): Promise<void> {
   assert.ok(state.app, "expected demo app to be initialized");
-  const response = await state.app.inject({ method, url, payload } as any);
+  const response = await state.app.inject({ method, url, payload, headers: authHeaderForMethod(method) } as any);
   state.latestStatusCode = response.statusCode;
   state.latestBody = response.json();
+}
+
+function authHeaderForMethod(method: string) {
+  const scopes = ["GET", "HEAD"].includes(method.toUpperCase()) ? [Scope.READ] : [Scope.MODIFY];
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    sub: "demo-client",
+    iss: authConfig.issuer,
+    aud: authConfig.audience,
+    exp: now + 3600,
+    scope: scopes.join(" ")
+  };
+  const header = { alg: "HS256", typ: "JWT" };
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", authConfig.secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest("base64url");
+
+  return { authorization: `Bearer ${encodedHeader}.${encodedPayload}.${signature}` };
 }
 
 function latestBody<T>(state: DemoState): T {
@@ -90,7 +114,7 @@ const stepDefinitions: StepDefinition[] = [
         { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true },
         true
       );
-      state.app = buildServer(store, { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true });
+      state.app = buildServer(store, { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true }, undefined, authConfig);
     }
   },
   {
