@@ -228,6 +228,13 @@ npm test
 
 For a full API walkthrough that starts from an empty database and creates all demo data through the service, see `DEMO.md`.
 
+### Workflow Policy
+
+- Every repo change must have a beads ticket before implementation starts.
+- Completed features must bump the service version in `package.json` before merge.
+- Every service version bump must also update `VERSIONS.md` with the user-visible changes in that version.
+- The healthcheck version returned by `GET /health` is expected to reflect that feature-ready version bump.
+
 ### Implemented Endpoints
 
 - `GET /health`
