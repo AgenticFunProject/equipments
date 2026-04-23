@@ -6,6 +6,7 @@ import { type BearerAuthConfig, loadBearerAuthConfig, Scope } from "../src/auth.
 import { StorageBackend } from "../src/persistence.js";
 import { buildServer } from "../src/server.js";
 import { EquipmentsStore } from "../src/store.js";
+import { SERVICE_VERSION } from "../src/version.js";
 
 const authConfig = loadBearerAuthConfig({});
 
@@ -60,7 +61,7 @@ test("GET /health returns ok", async () => {
   const app = createApp();
   const response = await app.inject({ method: "GET", url: "/health" });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { status: "ok" });
+  assert.deepEqual(response.json(), { status: "ok", version: SERVICE_VERSION });
 });
 
 test("GET /equipment-types requires a bearer token", async () => {

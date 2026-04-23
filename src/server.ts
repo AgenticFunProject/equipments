@@ -6,6 +6,7 @@ import { type RuntimeConfig, StorageBackend } from "./persistence.js";
 import { getPlaygroundScript, getPlaygroundStyle, renderApiPlayground } from "./playground.js";
 import { EquipmentsStore } from "./store.js";
 import { AuditOutcome, type AuditContext } from "./types.js";
+import { SERVICE_VERSION } from "./version.js";
 
 const defaultRuntimeConfig: RuntimeConfig = { backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false };
 const defaultDevMode = process.env.NODE_ENV !== "production";
@@ -82,7 +83,7 @@ export function buildServer(
     reply.type("text/javascript; charset=utf-8").send(getPlaygroundScript());
   });
 
-  app.get("/health", async () => ({ status: "ok" }));
+  app.get("/health", async () => ({ status: "ok", version: SERVICE_VERSION }));
 
   app.get("/equipment-types", async () => ({ equipmentTypes: store.listEquipmentTypes() }));
 
