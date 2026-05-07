@@ -6,6 +6,11 @@ Every service version bump must add or update an entry in this file.
 
 - No unreleased changes recorded yet.
 
+## 0.2.0
+
+- Added Kafka-driven user sync so local user records can be created and updated from user events.
+- Added idempotent local user upserts with persistence coverage for synced user profiles.
+
 ## Entry Format
 
 When the version changes, add a section like this:

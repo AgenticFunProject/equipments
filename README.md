@@ -146,6 +146,7 @@ AVAILABLE → RESERVED → DISPATCHED ──┬──→ RETURNED → AVAILABLE
 |-------|--------|
 | `booking.cancelled` | Automatically release the reservation for that booking |
 | `booking.completed` | Trigger return flow if not already done |
+| `user.created` / `user.updated` / `user.changed` | Upsert the local users table from Kafka-backed user profile events |
 
 ## Out of Scope (v1)
 - Depot-to-depot repositioning logic
@@ -176,6 +177,12 @@ npm run dev
 ```
 
 Service starts on `http://0.0.0.0:3000` by default.
+
+Kafka-backed local user sync stays disabled unless both `USER_EVENTS_KAFKA_BROKERS` and `USER_EVENTS_KAFKA_TOPIC` are set. Optional knobs:
+
+- `USER_EVENTS_KAFKA_GROUP_ID` defaults to `equipments-user-sync`
+- `USER_EVENTS_KAFKA_CLIENT_ID` defaults to `equipments-service`
+- `USER_EVENTS_KAFKA_FROM_BEGINNING=true` replays the topic from the beginning for a fresh local rebuild
 
 `GET /health` remains unauthenticated. All other routes require `Authorization: Bearer <token>`.
 

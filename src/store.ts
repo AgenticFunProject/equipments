@@ -1,5 +1,5 @@
 import { createPersistence, type RuntimeConfig, type StorePersistence } from "./persistence/index.js";
-import type { AuditEvent, ContainerUnit, CreateReservationRequest, EquipmentType, Reservation } from "./types.js";
+import type { AuditEvent, ContainerUnit, CreateReservationRequest, EquipmentType, LocalUser, Reservation } from "./types.js";
 import { listAuditEvents, recordAuditEvent } from "./store/audit.js";
 import {
   getAvailability,
@@ -14,7 +14,7 @@ import { createEquipmentType, listEquipmentTypes, updateEquipmentType } from "./
 import { consumeEvent, createReservation, releaseReservationByBooking } from "./store/reservations.js";
 import { type ActorIdentity, type ListContainersFilter, type StoreState } from "./store/shared.js";
 import { createSnapshot, initializeState, restoreState } from "./store/state.js";
-import { findOrCreateUserId } from "./store/users.js";
+import { findOrCreateUserId, listUsers, type UpsertLocalUserInput, upsertLocalUser } from "./store/users.js";
 
 export class EquipmentsStore {
   private state: StoreState;
@@ -50,6 +50,10 @@ export class EquipmentsStore {
 
   listAuditEvents(): AuditEvent[] {
     return listAuditEvents(this.state);
+  }
+
+  listUsers(): LocalUser[] {
+    return listUsers(this.state);
   }
 
   recordAuditEvent(event: Omit<AuditEvent, "id">): AuditEvent {
@@ -127,6 +131,10 @@ export class EquipmentsStore {
       (id, currentActor) => this.returnContainer(id, currentActor),
       () => this.persist()
     );
+  }
+
+  upsertLocalUser(input: UpsertLocalUserInput): LocalUser {
+    return upsertLocalUser(this.state, input, () => this.persist());
   }
 
   private persist(): void {

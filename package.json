@@ -1,6 +1,6 @@
 {
   "name": "equipments-service",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Container equipments and inventory service",
   "type": "module",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "fastify": "^5.3.0",
+    "kafkajs": "^2.2.4",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
