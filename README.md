@@ -234,6 +234,7 @@ For a full API walkthrough that starts from an empty database and creates all de
 - Completed features must bump the service version in `package.json` before merge.
 - Every service version bump must also update `VERSIONS.md` with the user-visible changes in that version.
 - The healthcheck version returned by `GET /health` is expected to reflect that feature-ready version bump.
+- GitHub board mirroring for beads is documented in `github-board-sync.md` and audited/applied with `npm run sync:github-board`.
 
 ### Implemented Endpoints
 
