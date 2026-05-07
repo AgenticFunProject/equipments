@@ -62,7 +62,20 @@ export class SqlitePersistence implements StorePersistence {
       )
       .all() as unknown as EquipmentType[];
     const users = this.db
-      .prepare("SELECT id, issuer, subject, created_at AS createdAt FROM users ORDER BY created_at, id")
+      .prepare(
+        `SELECT
+          id,
+          COALESCE(external_identity, issuer || ':' || subject) AS externalIdentity,
+          issuer,
+          subject,
+          display_name AS displayName,
+          email,
+          COALESCE(status, 'ACTIVE') AS status,
+          created_at AS createdAt,
+          COALESCE(updated_at, created_at) AS updatedAt
+        FROM users
+        ORDER BY created_at, id`
+      )
       .all() as unknown as LocalUser[];
     const containers = this.db
       .prepare(
@@ -154,7 +167,17 @@ export class SqlitePersistence implements StorePersistence {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertUser = this.db.prepare(
-      "INSERT INTO users (id, issuer, subject, created_at) VALUES (?, ?, ?, ?)"
+      `INSERT INTO users (
+        id,
+        external_identity,
+        issuer,
+        subject,
+        display_name,
+        email,
+        status,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertContainer = this.db.prepare(
       `INSERT INTO containers (
@@ -222,7 +245,17 @@ export class SqlitePersistence implements StorePersistence {
       }
 
       for (const user of snapshot.users) {
-        insertUser.run(user.id, user.issuer, user.subject, user.createdAt);
+        insertUser.run(
+          user.id,
+          user.externalIdentity,
+          user.issuer,
+          user.subject,
+          user.displayName,
+          user.email,
+          user.status,
+          user.createdAt,
+          user.updatedAt
+        );
       }
 
       for (const container of snapshot.containers) {
@@ -377,6 +410,10 @@ export class SqlitePersistence implements StorePersistence {
         this.backfillAuditMetadata();
         this.migrateLegacySnapshot();
         return;
+      case 4:
+        this.ensureUserProfileColumns();
+        this.backfillUserProfileColumns();
+        return;
       default:
         throw new DomainError(`unsupported sqlite migration ${version}`, 500);
     }
@@ -404,6 +441,14 @@ export class SqlitePersistence implements StorePersistence {
     this.ensureColumn("reservations", "updated_at", "TEXT");
   }
 
+  private ensureUserProfileColumns(): void {
+    this.ensureColumn("users", "external_identity", "TEXT");
+    this.ensureColumn("users", "display_name", "TEXT");
+    this.ensureColumn("users", "email", "TEXT");
+    this.ensureColumn("users", "status", "TEXT");
+    this.ensureColumn("users", "updated_at", "TEXT");
+  }
+
   private ensureColumn(tableName: string, columnName: string, definition: string): void {
     const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
     if (columns.some((column) => column.name === columnName)) {
@@ -424,6 +469,15 @@ export class SqlitePersistence implements StorePersistence {
 
       UPDATE reservations
       SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    `);
+  }
+
+  private backfillUserProfileColumns(): void {
+    this.db.exec(`
+      UPDATE users
+      SET external_identity = COALESCE(external_identity, issuer || ':' || subject),
+          status = COALESCE(status, 'ACTIVE'),
+          updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
     `);
   }
 }

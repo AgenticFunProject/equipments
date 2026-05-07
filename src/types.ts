@@ -29,9 +29,14 @@ export interface EquipmentType {
 
 export interface LocalUser {
   id: string;
+  externalIdentity: string;
   issuer: string;
   subject: string;
+  displayName: string | null;
+  email: string | null;
+  status: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface ContainerUnit {

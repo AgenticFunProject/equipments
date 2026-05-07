@@ -16,6 +16,7 @@ import {
   STORAGE_SQLITE_PATH_ENV,
   StorageBackend
 } from "../src/persistence/index.js";
+import { parseSnapshot } from "../src/persistence/snapshot.js";
 import type { StoreSnapshot } from "../src/persistence/index.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
 
@@ -37,9 +38,14 @@ function createSnapshot(): StoreSnapshot {
     users: [
       {
         id: "usr-local-1",
+        externalIdentity: "platform-auth:ops-agent",
         issuer: "platform-auth",
         subject: "ops-agent",
-        createdAt: "2026-04-22T00:00:00.000Z"
+        displayName: "Ops Agent",
+        email: "ops-agent@example.com",
+        status: "ACTIVE",
+        createdAt: "2026-04-22T00:00:00.000Z",
+        updatedAt: "2026-04-22T01:00:00.000Z"
       }
     ],
     containers: [
@@ -293,15 +299,67 @@ test("sqlite backend persists local users in relational tables", () => {
 
     const loaded = persistence.load();
     const db = new DatabaseSync(path);
-    const userRow = db.prepare("SELECT id, issuer, subject, created_at AS createdAt FROM users WHERE id = ?").get(
-      snapshot.users[0].id
-    ) as { id: string; issuer: string; subject: string; createdAt: string };
+    const userRow = db
+      .prepare(
+        `SELECT
+          id,
+          external_identity AS externalIdentity,
+          issuer,
+          subject,
+          display_name AS displayName,
+          email,
+          status,
+          created_at AS createdAt,
+          updated_at AS updatedAt
+        FROM users
+        WHERE id = ?`
+      )
+      .get(snapshot.users[0].id) as {
+      id: string;
+      externalIdentity: string;
+      issuer: string;
+      subject: string;
+      displayName: string | null;
+      email: string | null;
+      status: string;
+      createdAt: string;
+      updatedAt: string;
+    };
 
     assert.deepEqual(normalizeSnapshot(loaded), snapshot);
     assert.deepEqual(normalizeRecord(userRow), snapshot.users[0]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("parseSnapshot backfills new local user profile fields", () => {
+  const snapshot = parseSnapshot(
+    JSON.stringify({
+      users: [
+        {
+          id: "usr-local-1",
+          issuer: "platform-auth",
+          subject: "ops-agent",
+          createdAt: "2026-04-22T00:00:00.000Z"
+        }
+      ]
+    })
+  );
+
+  assert.deepEqual(snapshot.users, [
+    {
+      id: "usr-local-1",
+      externalIdentity: "platform-auth:ops-agent",
+      issuer: "platform-auth",
+      subject: "ops-agent",
+      displayName: null,
+      email: null,
+      status: "ACTIVE",
+      createdAt: "2026-04-22T00:00:00.000Z",
+      updatedAt: "2026-04-22T00:00:00.000Z"
+    }
+  ]);
 });
 
 test("sqlite backend persists audit metadata columns for business records", () => {
@@ -476,16 +534,149 @@ test("sqlite backend migrates older schema versions forward", () => {
     const equipmentColumns = db.prepare("PRAGMA table_info(equipment_types)").all() as Array<{ name: string }>;
     const containerColumns = db.prepare("PRAGMA table_info(containers)").all() as Array<{ name: string }>;
     const reservationColumns = db.prepare("PRAGMA table_info(reservations)").all() as Array<{ name: string }>;
+    const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
 
     assert.equal(userVersion.user_version, SQLITE_SCHEMA_VERSION);
     assert.equal(usersTable.name, "users");
     assert.equal(auditTable.name, "audit_events");
+    assert.ok(userColumns.some((column) => column.name === "external_identity"));
+    assert.ok(userColumns.some((column) => column.name === "display_name"));
+    assert.ok(userColumns.some((column) => column.name === "email"));
+    assert.ok(userColumns.some((column) => column.name === "status"));
+    assert.ok(userColumns.some((column) => column.name === "updated_at"));
     assert.ok(equipmentColumns.some((column) => column.name === "created_by_user_id"));
     assert.ok(equipmentColumns.some((column) => column.name === "updated_at"));
     assert.ok(containerColumns.some((column) => column.name === "last_modified_by_user_id"));
     assert.ok(containerColumns.some((column) => column.name === "updated_at"));
     assert.ok(reservationColumns.some((column) => column.name === "last_modified_by_user_id"));
     assert.ok(reservationColumns.some((column) => column.name === "updated_at"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("sqlite backend backfills user profile columns during migration", () => {
+  const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-users-migrate-"));
+  try {
+    const path = join(dir, "equipments.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec(`
+      PRAGMA user_version = 3;
+
+      CREATE TABLE store_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        initialized INTEGER NOT NULL
+      );
+
+      CREATE TABLE audit_events (
+        id TEXT PRIMARY KEY,
+        actor TEXT NOT NULL,
+        action TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        request_context TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        error_message TEXT
+      );
+
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        issuer TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (issuer, subject)
+      );
+
+      CREATE TABLE equipment_types (
+        code TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        nominal_length TEXT NOT NULL,
+        max_payload_kg REAL NOT NULL,
+        created_by_user_id TEXT,
+        last_modified_by_user_id TEXT,
+        created_at TEXT,
+        updated_at TEXT
+      );
+
+      CREATE TABLE containers (
+        id TEXT PRIMARY KEY,
+        container_number TEXT NOT NULL UNIQUE,
+        equipment_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        current_depot TEXT NOT NULL,
+        booking_reference TEXT,
+        last_moved_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        created_by_user_id TEXT,
+        last_modified_by_user_id TEXT,
+        updated_at TEXT
+      );
+
+      CREATE TABLE reservations (
+        id TEXT PRIMARY KEY,
+        booking_reference TEXT NOT NULL UNIQUE,
+        origin_depot TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        created_by_user_id TEXT,
+        last_modified_by_user_id TEXT,
+        updated_at TEXT
+      );
+
+      CREATE TABLE reservation_containers (
+        reservation_id TEXT NOT NULL,
+        container_id TEXT NOT NULL,
+        order_index INTEGER NOT NULL,
+        PRIMARY KEY (reservation_id, container_id)
+      );
+
+      INSERT INTO store_meta (id, initialized) VALUES (1, 1);
+      INSERT INTO users (id, issuer, subject, created_at)
+      VALUES ('usr-local-1', 'platform-auth', 'ops-agent', '2026-04-22T00:00:00.000Z');
+    `);
+
+    const persistence = createPersistence({ backend: StorageBackend.SQLITE, path });
+    const loaded = persistence.load();
+    const userRow = db
+      .prepare(
+        `SELECT
+          external_identity AS externalIdentity,
+          display_name AS displayName,
+          email,
+          status,
+          updated_at AS updatedAt
+        FROM users
+        WHERE id = 'usr-local-1'`
+      )
+      .get() as {
+      externalIdentity: string;
+      displayName: string | null;
+      email: string | null;
+      status: string;
+      updatedAt: string;
+    };
+
+    assert.deepEqual(normalizeSnapshot(loaded)?.users, [
+      {
+        id: "usr-local-1",
+        externalIdentity: "platform-auth:ops-agent",
+        issuer: "platform-auth",
+        subject: "ops-agent",
+        displayName: null,
+        email: null,
+        status: "ACTIVE",
+        createdAt: "2026-04-22T00:00:00.000Z",
+        updatedAt: "2026-04-22T00:00:00.000Z"
+      }
+    ]);
+    assert.deepEqual(normalizeRecord(userRow), {
+      externalIdentity: "platform-auth:ops-agent",
+      displayName: null,
+      email: null,
+      status: "ACTIVE",
+      updatedAt: "2026-04-22T00:00:00.000Z"
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

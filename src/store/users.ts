@@ -15,11 +15,17 @@ export function findOrCreateUserId(state: StoreState, actor?: ActorIdentity): st
     return existing.id;
   }
 
+  const now = new Date().toISOString();
   const user: LocalUser = {
     id: `usr-${randomUUID()}`,
+    externalIdentity: `${issuer}:${subject}`,
     issuer,
     subject,
-    createdAt: new Date().toISOString()
+    displayName: null,
+    email: null,
+    status: "ACTIVE",
+    createdAt: now,
+    updatedAt: now
   };
   state.users.set(user.id, user);
   return user.id;

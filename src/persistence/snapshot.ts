@@ -12,7 +12,15 @@ export function parseSnapshot(raw: string): StoreSnapshot {
       createdAt: equipmentType.createdAt ?? now,
       updatedAt: equipmentType.updatedAt ?? equipmentType.createdAt ?? now
     })),
-    users: parsed.users ?? [],
+    users: (parsed.users ?? []).map((user) => ({
+      ...user,
+      externalIdentity: user.externalIdentity ?? `${user.issuer}:${user.subject}`,
+      displayName: user.displayName ?? null,
+      email: user.email ?? null,
+      status: user.status ?? "ACTIVE",
+      createdAt: user.createdAt ?? now,
+      updatedAt: user.updatedAt ?? user.createdAt ?? now
+    })),
     containers: (parsed.containers ?? []).map((container) => ({
       ...container,
       createdByUserId: container.createdByUserId ?? null,
