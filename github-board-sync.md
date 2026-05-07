@@ -58,6 +58,14 @@ Apply changes:
 npm run sync:github-board -- --apply
 ```
 
+Override the routed rig explicitly if needed:
+
+```bash
+npm run sync:github-board -- --rig equipments --apply
+```
+
+The script defaults to `--rig equipments`, so it is safe to run from the mayor checkout or any other town context that has this repo checked out. The current working directory no longer controls which beads database is mirrored.
+
 ## Expected Workflow
 
 1. Create or update the bead in `.beads/`.
@@ -66,9 +74,17 @@ npm run sync:github-board -- --apply
 4. Re-run with `--apply`.
 5. If a mirrored bead later closes, run the script again so the GitHub issue closes and the board item moves to `Done`.
 
+For mayor-driven runs, use the same command from the mayor rig checkout:
+
+```bash
+npm run sync:github-board -- --apply
+```
+
+Because the script routes `bd list` to the Equipments rig explicitly, no manual GraphQL patching or local `.beads` database setup is required in the mayor checkout.
+
 ## Implementation Notes
 
 - Script path: `scripts/sync-github-board.mjs`
-- The script uses `bd list --json` as the source of truth for bead state.
+- The script uses `bd list --rig equipments --json` as the source of truth for bead state by default.
 - It uses `gh api graphql` plus `gh api repos/.../issues` to update GitHub.
 - The script is safe to run repeatedly because it updates the managed `Bead:` block instead of creating a fresh issue each time.

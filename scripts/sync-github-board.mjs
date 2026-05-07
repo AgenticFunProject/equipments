@@ -7,6 +7,7 @@ const REPO = "equipments";
 const REPO_SLUG = `${OWNER}/${REPO}`;
 const PROJECT_NUMBER = 3;
 const APPLY = process.argv.includes("--apply");
+const DEFAULT_BEADS_RIG = "equipments";
 const MANAGED_START = "<!-- beads-sync:start -->";
 const MANAGED_END = "<!-- beads-sync:end -->";
 const TITLE_ID_PATTERN = /\b(eq-[a-z0-9-]+)\b/i;
@@ -33,6 +34,20 @@ function run(command, args) {
 function runJson(command, args) {
   const output = run(command, args);
   return JSON.parse(output);
+}
+
+function readOption(name) {
+  const index = process.argv.findIndex((arg) => arg === name || arg.startsWith(`${name}=`));
+  if (index === -1) {
+    return null;
+  }
+
+  const arg = process.argv[index];
+  if (arg.includes("=")) {
+    return arg.slice(arg.indexOf("=") + 1);
+  }
+
+  return process.argv[index + 1] ?? null;
 }
 
 function graphql(query) {
@@ -132,7 +147,8 @@ function printAction(action, detail) {
   console.log(`${APPLY ? "apply" : "plan"}: ${action} ${detail}`);
 }
 
-const beadData = runJson("bd", ["list", "--all", "--flat", "--json", "-n", "0"]);
+const beadsRig = readOption("--rig") || process.env.BEADS_RIG || DEFAULT_BEADS_RIG;
+const beadData = runJson("bd", ["list", "--rig", beadsRig, "--all", "--flat", "--json", "-n", "0"]);
 const beads = beadData.filter(isMirrorCandidate);
 
 const repoResponse = graphql(`query {
@@ -352,4 +368,4 @@ if (unmatchedIssues.length > 0) {
   }
 }
 
-console.log(`${APPLY ? "applied" : "planned"} sync for ${mirroredBeadIds.size} mirrored bead(s).`);
+console.log(`${APPLY ? "applied" : "planned"} sync for ${mirroredBeadIds.size} mirrored bead(s) from rig '${beadsRig}'.`);
