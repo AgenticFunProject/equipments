@@ -15,7 +15,7 @@ export const STORAGE_SQLITE_PATH_ENV = "STORAGE_SQLITE_PATH";
 export const STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV = "STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT";
 export const STORAGE_POSTGRES_URL_ENV = "STORAGE_POSTGRES_URL";
 export const SQLITE_SCHEMA_VERSION = 4;
-export const POSTGRES_SCHEMA_VERSION = 1;
+export const POSTGRES_SCHEMA_VERSION = 2;
 
 export interface StoreSnapshot {
   auditEvents: AuditEvent[];

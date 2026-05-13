@@ -218,6 +218,219 @@ test("postgres backend rejects stale writes with optimistic concurrency", async 
   }
 });
 
+test("postgres backend upgrades legacy snapshot schema into relational tables", async () => {
+  const snapshot = createSnapshot();
+  const state = {
+    meta: { schemaVersion: 1, initialized: true, version: 7 },
+    legacySnapshot: JSON.parse(JSON.stringify(snapshot)) as StoreSnapshot,
+    users: [] as StoreSnapshot["users"],
+    equipmentTypes: [] as StoreSnapshot["equipmentTypes"],
+    containers: [] as StoreSnapshot["containers"],
+    reservations: [] as Array<Omit<StoreSnapshot["reservations"][number], "containers">>,
+    reservationContainers: [] as Array<{ reservationId: string; containerId: string; orderIndex: number }>,
+    auditEvents: [] as StoreSnapshot["auditEvents"]
+  };
+  const fakeClient = {
+    async query(sql: string, params: unknown[] = []) {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO store_meta") || sql.includes("CREATE TABLE IF NOT EXISTS store_meta") || sql.includes("CREATE TABLE IF NOT EXISTS store_snapshots") || sql.includes("CREATE TABLE IF NOT EXISTS users") || sql.includes("CREATE INDEX IF NOT EXISTS")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT schema_version FROM store_meta")) {
+        return { rows: [{ schema_version: state.meta.schemaVersion }] };
+      }
+      if (sql.includes("UPDATE store_meta SET schema_version = $1")) {
+        state.meta.schemaVersion = Number(params[0]);
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT meta.initialized, snapshots.snapshot")) {
+        return { rows: [{ initialized: state.meta.initialized, snapshot: state.legacySnapshot }] };
+      }
+      if (sql.includes("UPDATE store_meta SET initialized = TRUE WHERE id = 1")) {
+        state.meta.initialized = true;
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT initialized, version FROM store_meta")) {
+        return { rows: [{ initialized: state.meta.initialized, version: String(state.meta.version) }] };
+      }
+      if (sql.includes("SELECT version FROM store_meta WHERE id = 1 FOR UPDATE")) {
+        return { rows: [{ version: String(state.meta.version) }] };
+      }
+      if (sql.includes("DELETE FROM audit_events")) {
+        state.auditEvents = [];
+        return { rows: [] };
+      }
+      if (sql.includes("DELETE FROM reservation_containers")) {
+        state.reservationContainers = [];
+        return { rows: [] };
+      }
+      if (sql.includes("DELETE FROM reservations")) {
+        state.reservations = [];
+        return { rows: [] };
+      }
+      if (sql.includes("DELETE FROM containers")) {
+        state.containers = [];
+        return { rows: [] };
+      }
+      if (sql.includes("DELETE FROM equipment_types")) {
+        state.equipmentTypes = [];
+        return { rows: [] };
+      }
+      if (sql.includes("DELETE FROM users")) {
+        state.users = [];
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO users")) {
+        state.users.push({
+          id: params[0] as string,
+          externalIdentity: params[1] as string,
+          issuer: params[2] as string,
+          subject: params[3] as string,
+          displayName: params[4] as string | null,
+          email: params[5] as string | null,
+          status: params[6] as string,
+          createdAt: params[7] as string,
+          updatedAt: params[8] as string
+        });
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO equipment_types")) {
+        state.equipmentTypes.push({
+          code: params[0] as string,
+          description: params[1] as string,
+          nominalLength: params[2] as string,
+          maxPayloadKg: params[3] as number,
+          createdByUserId: params[4] as string | null,
+          lastModifiedByUserId: params[5] as string | null,
+          createdAt: params[6] as string,
+          updatedAt: params[7] as string
+        });
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO containers")) {
+        state.containers.push({
+          id: params[0] as string,
+          containerNumber: params[1] as string,
+          equipmentType: params[2] as string,
+          status: params[3] as StoreSnapshot["containers"][number]["status"],
+          currentDepot: params[4] as string,
+          bookingReference: params[5] as string | null,
+          createdByUserId: params[6] as string | null,
+          lastModifiedByUserId: params[7] as string | null,
+          lastMovedAt: params[8] as string,
+          createdAt: params[9] as string,
+          updatedAt: params[10] as string
+        });
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO reservations")) {
+        state.reservations.push({
+          id: params[0] as string,
+          bookingReference: params[1] as string,
+          originDepot: params[2] as string,
+          status: params[3] as StoreSnapshot["reservations"][number]["status"],
+          createdByUserId: params[4] as string | null,
+          lastModifiedByUserId: params[5] as string | null,
+          createdAt: params[6] as string,
+          updatedAt: params[7] as string
+        });
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO reservation_containers")) {
+        state.reservationContainers.push({
+          reservationId: params[0] as string,
+          containerId: params[1] as string,
+          orderIndex: params[2] as number
+        });
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO audit_events")) {
+        state.auditEvents.push({
+          id: params[0] as string,
+          actor: params[1] as string,
+          action: params[2] as string,
+          resourceType: params[3] as string,
+          resourceId: params[4] as string,
+          timestamp: params[5] as string,
+          requestContext: JSON.parse(params[6] as string),
+          outcome: params[7] as StoreSnapshot["auditEvents"][number]["outcome"],
+          errorMessage: params[8] as string | null
+        });
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE store_meta") && sql.includes("version = version + 1")) {
+        state.meta.initialized = true;
+        state.meta.version += 1;
+        return { rows: [] };
+      }
+      if (sql.includes("FROM audit_events")) {
+        return {
+          rows: state.auditEvents.map((event) => ({
+            ...event,
+            requestContext: event.requestContext,
+            errorMessage: event.errorMessage
+          }))
+        };
+      }
+      if (sql.includes("FROM equipment_types")) {
+        return { rows: state.equipmentTypes.map((item) => ({ ...item })) };
+      }
+      if (sql.includes("FROM users")) {
+        return { rows: state.users.map((item) => ({ ...item })) };
+      }
+      if (sql.includes("FROM containers")) {
+        return { rows: state.containers.map((item) => ({ ...item })) };
+      }
+      if (sql.includes("FROM reservations") && sql.includes('booking_reference AS "bookingReference"')) {
+        return { rows: state.reservations.map((item) => ({ ...item })) };
+      }
+      if (sql.includes("FROM reservation_containers")) {
+        return {
+          rows: state.reservationContainers.map((item) => ({
+            reservationId: item.reservationId,
+            containerId: item.containerId
+          }))
+        };
+      }
+
+      throw new Error(`Unhandled SQL in test double: ${sql}`);
+    },
+    release() {
+      return undefined;
+    }
+  };
+  const persistence = new PostgresPersistence("postgres://equipments:test@db/equipments", () => ({
+    async connect() {
+      return fakeClient as any;
+    },
+    async end() {
+      return undefined;
+    }
+  }));
+
+  try {
+    const loaded = await persistence.loadWithVersion();
+
+    assert.deepEqual(normalizeSnapshot(loaded.snapshot), snapshot);
+    assert.equal(loaded.version, 7);
+    assert.equal(state.meta.schemaVersion, POSTGRES_SCHEMA_VERSION);
+    assert.equal(state.meta.initialized, true);
+    assert.equal(state.meta.version, 7);
+    assert.deepEqual(state.containers.map((item) => item.containerNumber), ["MSCU1234567"]);
+    assert.deepEqual(state.reservationContainers, [{ reservationId: "res-local-1", containerId: "ctr-local-1", orderIndex: 0 }]);
+
+    snapshot.equipmentTypes[0].description = "45-foot High Cube Updated";
+    assert.equal(await persistence.saveWithVersion(snapshot, loaded.version), true);
+
+    assert.equal(state.meta.version, 8);
+    assert.deepEqual(state.equipmentTypes.map((item) => item.description), ["45-foot High Cube Updated"]);
+  } finally {
+    await persistence.close();
+  }
+});
+
 test("postgres backend enforces relational constraints", async () => {
   const db = newDb();
   const { Pool } = db.adapters.createPg();

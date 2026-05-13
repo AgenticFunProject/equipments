@@ -9,6 +9,7 @@ import {
   type StoreSnapshot,
   type VersionedStorePersistence
 } from "./types.js";
+import { parseSnapshot } from "./snapshot.js";
 
 interface PgPoolLike extends Pick<Pool, "end"> {
   connect(): Promise<PoolClient>;
@@ -170,155 +171,7 @@ export class PostgresPersistence implements StorePersistence, VersionedStorePers
         return false;
       }
 
-      await client.query("DELETE FROM audit_events");
-      await client.query("DELETE FROM reservation_containers");
-      await client.query("DELETE FROM reservations");
-      await client.query("DELETE FROM containers");
-      await client.query("DELETE FROM equipment_types");
-      await client.query("DELETE FROM users");
-
-      for (const user of snapshot.users) {
-        await client.query(
-          `INSERT INTO users (
-            id,
-            external_identity,
-            issuer,
-            subject,
-            display_name,
-            email,
-            status,
-            created_at,
-            updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [
-            user.id,
-            user.externalIdentity,
-            user.issuer,
-            user.subject,
-            user.displayName,
-            user.email,
-            user.status,
-            user.createdAt,
-            user.updatedAt
-          ]
-        );
-      }
-
-      for (const equipmentType of snapshot.equipmentTypes) {
-        await client.query(
-          `INSERT INTO equipment_types (
-            code,
-            description,
-            nominal_length,
-            max_payload_kg,
-            created_by_user_id,
-            last_modified_by_user_id,
-            created_at,
-            updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            equipmentType.code,
-            equipmentType.description,
-            equipmentType.nominalLength,
-            equipmentType.maxPayloadKg,
-            equipmentType.createdByUserId,
-            equipmentType.lastModifiedByUserId,
-            equipmentType.createdAt,
-            equipmentType.updatedAt
-          ]
-        );
-      }
-
-      for (const container of snapshot.containers) {
-        await client.query(
-          `INSERT INTO containers (
-            id,
-            container_number,
-            equipment_type,
-            status,
-            current_depot,
-            booking_reference,
-            created_by_user_id,
-            last_modified_by_user_id,
-            last_moved_at,
-            created_at,
-            updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [
-            container.id,
-            container.containerNumber,
-            container.equipmentType,
-            container.status,
-            container.currentDepot,
-            container.bookingReference,
-            container.createdByUserId,
-            container.lastModifiedByUserId,
-            container.lastMovedAt,
-            container.createdAt,
-            container.updatedAt
-          ]
-        );
-      }
-
-      for (const reservation of snapshot.reservations) {
-        await client.query(
-          `INSERT INTO reservations (
-            id,
-            booking_reference,
-            origin_depot,
-            status,
-            created_by_user_id,
-            last_modified_by_user_id,
-            created_at,
-            updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            reservation.id,
-            reservation.bookingReference,
-            reservation.originDepot,
-            reservation.status,
-            reservation.createdByUserId,
-            reservation.lastModifiedByUserId,
-            reservation.createdAt,
-            reservation.updatedAt
-          ]
-        );
-
-        for (const [index, containerId] of reservation.containers.entries()) {
-          await client.query(
-            `INSERT INTO reservation_containers (reservation_id, container_id, order_index)
-             VALUES ($1, $2, $3)`,
-            [reservation.id, containerId, index]
-          );
-        }
-      }
-
-      for (const auditEvent of snapshot.auditEvents) {
-        await client.query(
-          `INSERT INTO audit_events (
-            id,
-            actor,
-            action,
-            resource_type,
-            resource_id,
-            timestamp,
-            request_context,
-            outcome,
-            error_message
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
-          [
-            auditEvent.id,
-            auditEvent.actor,
-            auditEvent.action,
-            auditEvent.resourceType,
-            auditEvent.resourceId,
-            auditEvent.timestamp,
-            JSON.stringify(auditEvent.requestContext),
-            auditEvent.outcome,
-            auditEvent.errorMessage
-          ]
-        );
-      }
+      await this.replaceRelationalSnapshot(client, snapshot);
 
       await client.query(
         `UPDATE store_meta
@@ -395,6 +248,16 @@ export class PostgresPersistence implements StorePersistence, VersionedStorePers
   private async runMigration(client: PoolClient, version: number): Promise<void> {
     switch (version) {
       case 1:
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS store_snapshots (
+            id integer PRIMARY KEY REFERENCES store_meta(id) ON DELETE CASCADE,
+            snapshot jsonb NOT NULL
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_store_snapshots_id ON store_snapshots (id);
+        `);
+        return;
+      case 2:
         await client.query(`
           CREATE TABLE IF NOT EXISTS users (
             id text PRIMARY KEY CHECK (id <> ''),
@@ -475,9 +338,181 @@ export class PostgresPersistence implements StorePersistence, VersionedStorePers
           CREATE INDEX IF NOT EXISTS idx_audit_events_resource_time
             ON audit_events (resource_type, resource_id, timestamp);
         `);
+
+        await this.migrateLegacySnapshot(client);
         return;
       default:
         throw new DomainError(`unsupported postgres migration ${version}`, 500);
+    }
+  }
+
+  private async migrateLegacySnapshot(client: PoolClient): Promise<void> {
+    const legacyResult = await client.query<{ initialized: boolean; snapshot: unknown }>(
+      `SELECT meta.initialized, snapshots.snapshot
+       FROM store_meta AS meta
+       LEFT JOIN store_snapshots AS snapshots ON snapshots.id = meta.id
+       WHERE meta.id = 1`
+    );
+    const legacy = legacyResult.rows[0];
+    if (!legacy?.snapshot) {
+      return;
+    }
+
+    await this.replaceRelationalSnapshot(client, parseSnapshot(JSON.stringify(legacy.snapshot)));
+    if (legacy.initialized) {
+      await client.query("UPDATE store_meta SET initialized = TRUE WHERE id = 1");
+    }
+  }
+
+  private async replaceRelationalSnapshot(client: PoolClient, snapshot: StoreSnapshot): Promise<void> {
+    await client.query("DELETE FROM audit_events");
+    await client.query("DELETE FROM reservation_containers");
+    await client.query("DELETE FROM reservations");
+    await client.query("DELETE FROM containers");
+    await client.query("DELETE FROM equipment_types");
+    await client.query("DELETE FROM users");
+
+    for (const user of snapshot.users) {
+      await client.query(
+        `INSERT INTO users (
+          id,
+          external_identity,
+          issuer,
+          subject,
+          display_name,
+          email,
+          status,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          user.id,
+          user.externalIdentity,
+          user.issuer,
+          user.subject,
+          user.displayName,
+          user.email,
+          user.status,
+          user.createdAt,
+          user.updatedAt
+        ]
+      );
+    }
+
+    for (const equipmentType of snapshot.equipmentTypes) {
+      await client.query(
+        `INSERT INTO equipment_types (
+          code,
+          description,
+          nominal_length,
+          max_payload_kg,
+          created_by_user_id,
+          last_modified_by_user_id,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          equipmentType.code,
+          equipmentType.description,
+          equipmentType.nominalLength,
+          equipmentType.maxPayloadKg,
+          equipmentType.createdByUserId,
+          equipmentType.lastModifiedByUserId,
+          equipmentType.createdAt,
+          equipmentType.updatedAt
+        ]
+      );
+    }
+
+    for (const container of snapshot.containers) {
+      await client.query(
+        `INSERT INTO containers (
+          id,
+          container_number,
+          equipment_type,
+          status,
+          current_depot,
+          booking_reference,
+          created_by_user_id,
+          last_modified_by_user_id,
+          last_moved_at,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          container.id,
+          container.containerNumber,
+          container.equipmentType,
+          container.status,
+          container.currentDepot,
+          container.bookingReference,
+          container.createdByUserId,
+          container.lastModifiedByUserId,
+          container.lastMovedAt,
+          container.createdAt,
+          container.updatedAt
+        ]
+      );
+    }
+
+    for (const reservation of snapshot.reservations) {
+      await client.query(
+        `INSERT INTO reservations (
+          id,
+          booking_reference,
+          origin_depot,
+          status,
+          created_by_user_id,
+          last_modified_by_user_id,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          reservation.id,
+          reservation.bookingReference,
+          reservation.originDepot,
+          reservation.status,
+          reservation.createdByUserId,
+          reservation.lastModifiedByUserId,
+          reservation.createdAt,
+          reservation.updatedAt
+        ]
+      );
+
+      for (const [index, containerId] of reservation.containers.entries()) {
+        await client.query(
+          `INSERT INTO reservation_containers (reservation_id, container_id, order_index)
+           VALUES ($1, $2, $3)`,
+          [reservation.id, containerId, index]
+        );
+      }
+    }
+
+    for (const auditEvent of snapshot.auditEvents) {
+      await client.query(
+        `INSERT INTO audit_events (
+          id,
+          actor,
+          action,
+          resource_type,
+          resource_id,
+          timestamp,
+          request_context,
+          outcome,
+          error_message
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
+        [
+          auditEvent.id,
+          auditEvent.actor,
+          auditEvent.action,
+          auditEvent.resourceType,
+          auditEvent.resourceId,
+          auditEvent.timestamp,
+          JSON.stringify(auditEvent.requestContext),
+          auditEvent.outcome,
+          auditEvent.errorMessage
+        ]
+      );
     }
   }
 }
