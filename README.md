@@ -228,6 +228,8 @@ npm test
 
 For a full API walkthrough that starts from an empty database and creates all demo data through the service, see `DEMO.md`.
 
+For the recommended Azure production deployment path, see `docs/azure-production-deployment.md`.
+
 ### Workflow Policy
 
 - Every repo change must have a beads ticket before implementation starts.
