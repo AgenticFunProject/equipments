@@ -274,7 +274,7 @@ The same API and domain rules run on top of one of these backends:
 - `memory` (default) keeps state in-process only
 - `db` persists a JSON snapshot to disk
 - `sqlite` persists store state in relational SQLite tables on disk
-- `postgres` persists the validated store snapshot in PostgreSQL `jsonb` with optimistic concurrency for multi-replica safety
+- `postgres` persists store state in normalized PostgreSQL tables with optimistic concurrency for multi-replica safety
 - SQLite aliases: `sqlite3`, `sql`, `persistent-sqlite`, `persistent-sqlite3`
 - PostgreSQL aliases: `postgresql`, `pg`, `persistent-postgres`, `persistent-postgresql`
 
@@ -286,7 +286,7 @@ Environment variables:
 - `STORAGE_DB_PATH` is also accepted as a fallback for `sqlite`
 - `STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true` skips seeded baseline data when a SQLite database is created for the first time
 - `STORAGE_POSTGRES_URL` is required when `STORAGE_BACKEND=postgres`
-- PostgreSQL startup creates `store_meta` and `store_snapshots` automatically and refuses newer schema versions it does not understand
+- PostgreSQL startup creates `store_meta` plus normalized `users`, `equipment_types`, `containers`, `reservations`, `reservation_containers`, and `audit_events` tables automatically, and refuses newer schema versions it does not understand
 
 Examples:
 

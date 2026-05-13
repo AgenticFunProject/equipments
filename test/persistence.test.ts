@@ -161,7 +161,7 @@ test("loadRuntimeConfig sanitizes postgres display path", () => {
   assert.equal(config.path, "");
 });
 
-test("postgres backend round-trips snapshots with schema metadata", async () => {
+test("postgres backend stores snapshots in relational tables", async () => {
   const db = newDb();
   const { Pool } = db.adapters.createPg();
   const persistence = new PostgresPersistence("postgres://equipments:test@db/equipments", () => new Pool());
@@ -172,13 +172,27 @@ test("postgres backend round-trips snapshots with schema metadata", async () => 
 
     const loaded = await persistence.load();
     const meta = await db.public.many(`SELECT schema_version, initialized, version FROM store_meta WHERE id = 1`);
-    const storedSnapshot = await db.public.many(`SELECT snapshot FROM store_snapshots WHERE id = 1`);
+    const equipmentTypeRows = await db.public.many(`SELECT code, description FROM equipment_types WHERE code = '45HC'`);
+    const userRows = await db.public.many(`SELECT external_identity, email FROM users WHERE id = 'usr-local-1'`);
+    const containerRows = await db.public.many(`SELECT container_number, current_depot FROM containers ORDER BY container_number`);
+    const reservationRows = await db.public.many(
+      `SELECT booking_reference, origin_depot FROM reservations WHERE id = 'res-local-1'`
+    );
+    const reservationContainerRows = await db.public.many(
+      `SELECT reservation_id, container_id, order_index FROM reservation_containers ORDER BY order_index`
+    );
+    const auditRows = await db.public.many(`SELECT actor, action FROM audit_events WHERE resource_id = 'res-local-1'`);
 
     assert.deepEqual(normalizeSnapshot(loaded), snapshot);
     assert.equal(meta[0].schema_version, POSTGRES_SCHEMA_VERSION);
     assert.equal(meta[0].initialized, true);
     assert.equal(Number(meta[0].version), 1);
-    assert.deepEqual(normalizeSnapshot(parseSnapshot(JSON.stringify(storedSnapshot[0].snapshot))), snapshot);
+    assert.deepEqual(equipmentTypeRows, [{ code: "45HC", description: "45-foot High Cube" }]);
+    assert.deepEqual(userRows, [{ external_identity: "platform-auth:ops-agent", email: "ops-agent@example.com" }]);
+    assert.deepEqual(containerRows, [{ container_number: "MSCU1234567", current_depot: "NLRTM-01" }]);
+    assert.deepEqual(reservationRows, [{ booking_reference: "BOOK-45HC", origin_depot: "NLRTM-01" }]);
+    assert.deepEqual(reservationContainerRows, [{ reservation_id: "res-local-1", container_id: "ctr-local-1", order_index: 0 }]);
+    assert.deepEqual(auditRows, []);
   } finally {
     await persistence.close();
   }
@@ -199,6 +213,55 @@ test("postgres backend rejects stale writes with optimistic concurrency", async 
     assert.equal(await persistence.saveWithVersion(firstSnapshot, firstRead.version), true);
     assert.equal(await persistence.saveWithVersion(secondSnapshot, secondRead.version), false);
     assert.deepEqual(normalizeSnapshot(await persistence.load()), firstSnapshot);
+  } finally {
+    await persistence.close();
+  }
+});
+
+test("postgres backend enforces relational constraints", async () => {
+  const db = newDb();
+  const { Pool } = db.adapters.createPg();
+  const persistence = new PostgresPersistence("postgres://equipments:test@db/equipments", () => new Pool());
+
+  try {
+    await persistence.load();
+
+    assert.rejects(
+      async () =>
+        db.public.none(`
+          INSERT INTO equipment_types (
+            code,
+            description,
+            nominal_length,
+            max_payload_kg,
+            created_by_user_id,
+            last_modified_by_user_id,
+            created_at,
+            updated_at
+          ) VALUES ('BAD', '', '20''', 1000, NULL, NULL, '2026-04-22T00:00:00.000Z', '2026-04-22T00:00:00.000Z')
+        `),
+      /constraint/i
+    );
+
+    assert.rejects(
+      async () =>
+        db.public.none(`
+          INSERT INTO containers (
+            id,
+            container_number,
+            equipment_type,
+            status,
+            current_depot,
+            booking_reference,
+            created_by_user_id,
+            last_modified_by_user_id,
+            last_moved_at,
+            created_at,
+            updated_at
+          ) VALUES ('ctr-1', 'MSCU1234567', 'NOPE', 'INVALID', 'NLRTM-01', NULL, NULL, NULL, '2026-04-22T00:00:00.000Z', '2026-04-22T00:00:00.000Z', '2026-04-22T00:00:00.000Z')
+        `),
+      /constraint|violates foreign key/i
+    );
   } finally {
     await persistence.close();
   }
@@ -767,6 +830,39 @@ test("sqlite backend rejects unsupported future schema versions", () => {
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("postgres backend rejects unsupported future schema versions", async () => {
+  const fakeClient = {
+    async query(sql: string) {
+      if (sql.includes("SELECT schema_version FROM store_meta")) {
+        return { rows: [{ schema_version: POSTGRES_SCHEMA_VERSION + 1 }] };
+      }
+
+      return { rows: [] };
+    },
+    release() {
+      return undefined;
+    }
+  };
+  const persistence = new PostgresPersistence("postgres://equipments:test@db/equipments", () => ({
+    async connect() {
+      return fakeClient as any;
+    },
+    async end() {
+      return undefined;
+    }
+  }));
+  try {
+    await assert.rejects(
+      () => persistence.load(),
+      new RegExp(
+        `postgres schema version ${POSTGRES_SCHEMA_VERSION + 1} is newer than supported version ${POSTGRES_SCHEMA_VERSION}`
+      )
+    );
+  } finally {
+    await persistence.close();
   }
 });
 
