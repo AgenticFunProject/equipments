@@ -2,9 +2,9 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { DomainError } from "../errors.js";
 import type { AuditEvent, ContainerUnit, EquipmentType, LocalUser, Reservation } from "../types.js";
 
+import { runSqliteMigrations } from "./sqlite/migrations/index.js";
 import { parseSnapshot } from "./snapshot.js";
 import { SQLITE_SCHEMA_VERSION, type StorePersistence, type StoreSnapshot } from "./types.js";
 
@@ -14,7 +14,12 @@ export class SqlitePersistence implements StorePersistence {
   constructor(private readonly path: string) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
-    this.applyMigrations();
+    runSqliteMigrations(this.db, {
+      supportedVersion: SQLITE_SCHEMA_VERSION,
+      persistLegacySnapshot: (state) => {
+        this.save(parseSnapshot(state));
+      }
+    });
   }
 
   load(): StoreSnapshot | null {
@@ -296,188 +301,5 @@ export class SqlitePersistence implements StorePersistence {
       this.db.exec("ROLLBACK");
       throw error;
     }
-  }
-
-  private migrateLegacySnapshot(): void {
-    const meta = this.db.prepare("SELECT initialized FROM store_meta WHERE id = 1").get() as
-      | { initialized: number }
-      | undefined;
-    if (meta?.initialized) {
-      return;
-    }
-
-    const legacy = this.db.prepare("SELECT state FROM store_snapshots WHERE id = 1").get() as
-      | { state: string }
-      | undefined;
-    if (!legacy) {
-      return;
-    }
-
-    this.save(parseSnapshot(legacy.state));
-  }
-
-  private applyMigrations(): void {
-    const currentVersion = this.getSchemaVersion();
-    if (currentVersion > SQLITE_SCHEMA_VERSION) {
-      throw new DomainError(
-        `sqlite schema version ${currentVersion} is newer than supported version ${SQLITE_SCHEMA_VERSION}`,
-        500
-      );
-    }
-
-    for (let version = currentVersion + 1; version <= SQLITE_SCHEMA_VERSION; version += 1) {
-      this.runMigration(version);
-      this.setSchemaVersion(version);
-    }
-  }
-
-  private runMigration(version: number): void {
-    switch (version) {
-      case 1:
-        this.db.exec(`
-          CREATE TABLE IF NOT EXISTS store_meta (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            initialized INTEGER NOT NULL
-          );
-
-          CREATE TABLE IF NOT EXISTS equipment_types (
-            code TEXT PRIMARY KEY,
-            description TEXT NOT NULL,
-            nominal_length TEXT NOT NULL,
-            max_payload_kg REAL NOT NULL
-          );
-
-          CREATE TABLE IF NOT EXISTS containers (
-            id TEXT PRIMARY KEY,
-            container_number TEXT NOT NULL UNIQUE,
-            equipment_type TEXT NOT NULL,
-            status TEXT NOT NULL,
-            current_depot TEXT NOT NULL,
-            booking_reference TEXT,
-            last_moved_at TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (equipment_type) REFERENCES equipment_types(code)
-          );
-
-          CREATE TABLE IF NOT EXISTS reservations (
-            id TEXT PRIMARY KEY,
-            booking_reference TEXT NOT NULL UNIQUE,
-            origin_depot TEXT NOT NULL,
-            status TEXT NOT NULL,
-            created_at TEXT NOT NULL
-          );
-
-          CREATE TABLE IF NOT EXISTS reservation_containers (
-            reservation_id TEXT NOT NULL,
-            container_id TEXT NOT NULL,
-            order_index INTEGER NOT NULL,
-            PRIMARY KEY (reservation_id, container_id),
-            FOREIGN KEY (reservation_id) REFERENCES reservations(id) ON DELETE CASCADE,
-            FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE
-          );
-
-          CREATE TABLE IF NOT EXISTS store_snapshots (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            state TEXT NOT NULL
-          );
-        `);
-        return;
-      case 2:
-        this.db.exec(`
-          CREATE TABLE IF NOT EXISTS audit_events (
-            id TEXT PRIMARY KEY,
-            actor TEXT NOT NULL,
-            action TEXT NOT NULL,
-            resource_type TEXT NOT NULL,
-            resource_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            request_context TEXT NOT NULL,
-            outcome TEXT NOT NULL,
-            error_message TEXT
-          );
-
-          CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            issuer TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE (issuer, subject)
-          );
-        `);
-        return;
-      case 3:
-        this.ensureAuditMetadataColumns();
-        this.backfillAuditMetadata();
-        this.migrateLegacySnapshot();
-        return;
-      case 4:
-        this.ensureUserProfileColumns();
-        this.backfillUserProfileColumns();
-        return;
-      default:
-        throw new DomainError(`unsupported sqlite migration ${version}`, 500);
-    }
-  }
-
-  private getSchemaVersion(): number {
-    const row = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
-    return row.user_version;
-  }
-
-  private setSchemaVersion(version: number): void {
-    this.db.exec(`PRAGMA user_version = ${version}`);
-  }
-
-  private ensureAuditMetadataColumns(): void {
-    this.ensureColumn("equipment_types", "created_by_user_id", "TEXT");
-    this.ensureColumn("equipment_types", "last_modified_by_user_id", "TEXT");
-    this.ensureColumn("equipment_types", "created_at", "TEXT");
-    this.ensureColumn("equipment_types", "updated_at", "TEXT");
-    this.ensureColumn("containers", "created_by_user_id", "TEXT");
-    this.ensureColumn("containers", "last_modified_by_user_id", "TEXT");
-    this.ensureColumn("containers", "updated_at", "TEXT");
-    this.ensureColumn("reservations", "created_by_user_id", "TEXT");
-    this.ensureColumn("reservations", "last_modified_by_user_id", "TEXT");
-    this.ensureColumn("reservations", "updated_at", "TEXT");
-  }
-
-  private ensureUserProfileColumns(): void {
-    this.ensureColumn("users", "external_identity", "TEXT");
-    this.ensureColumn("users", "display_name", "TEXT");
-    this.ensureColumn("users", "email", "TEXT");
-    this.ensureColumn("users", "status", "TEXT");
-    this.ensureColumn("users", "updated_at", "TEXT");
-  }
-
-  private ensureColumn(tableName: string, columnName: string, definition: string): void {
-    const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-    if (columns.some((column) => column.name === columnName)) {
-      return;
-    }
-
-    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
-  }
-
-  private backfillAuditMetadata(): void {
-    this.db.exec(`
-      UPDATE equipment_types
-      SET created_at = COALESCE(created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')),
-          updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-      UPDATE containers
-      SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-      UPDATE reservations
-      SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
-    `);
-  }
-
-  private backfillUserProfileColumns(): void {
-    this.db.exec(`
-      UPDATE users
-      SET external_identity = COALESCE(external_identity, issuer || ':' || subject),
-          status = COALESCE(status, 'ACTIVE'),
-          updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
-    `);
   }
 }
