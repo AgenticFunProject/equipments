@@ -17,7 +17,7 @@ export class SqlitePersistence implements StorePersistence {
     this.applyMigrations();
   }
 
-  load(): StoreSnapshot | null {
+  async load(): Promise<StoreSnapshot | null> {
     const meta = this.db.prepare("SELECT initialized FROM store_meta WHERE id = 1").get() as
       | { initialized: number }
       | undefined;
@@ -137,7 +137,7 @@ export class SqlitePersistence implements StorePersistence {
     };
   }
 
-  save(snapshot: StoreSnapshot): void {
+  async save(snapshot: StoreSnapshot): Promise<void> {
     const upsertMeta = this.db.prepare(
       "INSERT INTO store_meta (id, initialized) VALUES (1, 1) ON CONFLICT(id) DO UPDATE SET initialized = excluded.initialized"
     );

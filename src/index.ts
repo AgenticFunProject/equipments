@@ -4,7 +4,8 @@ import { loadRuntimeConfig } from "./persistence/index.js";
 import { createStoreFromRuntimeConfig } from "./store.js";
 
 const config = loadRuntimeConfig();
-const app = buildServer(createStoreFromRuntimeConfig(config), config, undefined, loadBearerAuthConfig());
+const store = createStoreFromRuntimeConfig(config);
+const app = buildServer(store, config, undefined, loadBearerAuthConfig());
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "0.0.0.0";
 
@@ -18,3 +19,9 @@ app
     process.stderr.write(`${error}\n`);
     process.exit(1);
   });
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    void store.close().finally(() => process.exit(0));
+  });
+}

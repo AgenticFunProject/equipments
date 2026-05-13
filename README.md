@@ -274,7 +274,9 @@ The same API and domain rules run on top of one of these backends:
 - `memory` (default) keeps state in-process only
 - `db` persists a JSON snapshot to disk
 - `sqlite` persists store state in relational SQLite tables on disk
+- `postgres` persists the validated store snapshot in PostgreSQL `jsonb` with optimistic concurrency for multi-replica safety
 - SQLite aliases: `sqlite3`, `sql`, `persistent-sqlite`, `persistent-sqlite3`
+- PostgreSQL aliases: `postgresql`, `pg`, `persistent-postgres`, `persistent-postgresql`
 
 Environment variables:
 
@@ -283,6 +285,8 @@ Environment variables:
 - `STORAGE_SQLITE_PATH` is preferred when `STORAGE_BACKEND=sqlite`
 - `STORAGE_DB_PATH` is also accepted as a fallback for `sqlite`
 - `STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true` skips seeded baseline data when a SQLite database is created for the first time
+- `STORAGE_POSTGRES_URL` is required when `STORAGE_BACKEND=postgres`
+- PostgreSQL startup creates `store_meta` and `store_snapshots` automatically and refuses newer schema versions it does not understand
 
 Examples:
 
@@ -298,4 +302,7 @@ STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run dev
 
 # SQLite persistence without seeded baseline data on first boot
 STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true npm run dev
+
+# PostgreSQL persistence
+STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:secret@localhost:5432/equipments npm run dev
 ```

@@ -17,8 +17,9 @@ function escapeHtml(value: string): string {
 
 export function renderApiPlayground(config: RuntimeConfig, devMode: boolean): string {
   const backendLabel = escapeHtml(config.backend);
-  const backendPath = config.path ? escapeHtml(config.path) : "";
-  const backendDescription = config.path
+  const backendLocation = config.displayPath || config.path;
+  const backendPath = backendLocation ? escapeHtml(backendLocation) : "";
+  const backendDescription = backendLocation
     ? `Using ${backendLabel} persistence at <code>${backendPath}</code>.`
     : `Using ${backendLabel} persistence for this service instance.`;
   const resetSection = devMode

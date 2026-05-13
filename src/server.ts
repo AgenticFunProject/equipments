@@ -85,7 +85,11 @@ export function buildServer(
 
   app.get("/health", async () => ({ status: "ok", version: SERVICE_VERSION }));
 
-  app.get("/equipment-types", async () => ({ equipmentTypes: store.listEquipmentTypes() }));
+  app.addHook("onClose", async () => {
+    await store.close();
+  });
+
+  app.get("/equipment-types", async () => ({ equipmentTypes: await store.listEquipmentTypes() }));
 
   app.post("/equipment-types", async (request, reply) => auditedWrite(store, request, {
     action: "equipment_type.create",
@@ -96,7 +100,7 @@ export function buildServer(
       return { code: body.code?.trim().toUpperCase() ?? "" };
     }
   }, async () => {
-    const created = store.createEquipmentType(request.body as any, getCallerIdentity(request));
+    const created = await store.createEquipmentType(request.body as any, getCallerIdentity(request));
     reply.status(201);
     return created;
   }));
@@ -109,7 +113,7 @@ export function buildServer(
       const params = request.params as { code: string };
       return { code: params.code.trim().toUpperCase() };
     }
-  }, () => {
+  }, async () => {
     const params = request.params as { code: string };
     return store.updateEquipmentType(params.code, request.body as any, getCallerIdentity(request));
   }));
@@ -127,14 +131,14 @@ export function buildServer(
       };
     }
   }, async () => {
-    const created = store.registerContainer(request.body as any, getCallerIdentity(request));
+    const created = await store.registerContainer(request.body as any, getCallerIdentity(request));
     reply.status(201);
     return created;
   }));
 
   app.get("/containers", async (request) => {
     const query = request.query as { type?: string; status?: string; depot?: string };
-    return { containers: store.listContainers(query) };
+    return { containers: await store.listContainers(query) };
   });
 
   app.get("/containers/:id", async (request) => {
@@ -154,7 +158,7 @@ export function buildServer(
         status: body.status?.trim().toUpperCase() ?? ""
       };
     }
-  }, () => {
+  }, async () => {
     const params = request.params as { id: string };
     const body = request.body as { status: string };
     return store.overrideContainerStatus(params.id, body.status, getCallerIdentity(request));
@@ -162,7 +166,7 @@ export function buildServer(
 
   app.get("/availability", async (request) => {
     const query = request.query as { depotCode?: string };
-    return { availability: store.getAvailability(query.depotCode) };
+    return { availability: await store.getAvailability(query.depotCode) };
   });
 
   app.post("/reservations", async (request, reply) => auditedWrite(store, request, {
@@ -178,7 +182,7 @@ export function buildServer(
       };
     }
   }, async () => {
-    const result = store.createReservation(request.body as any, getCallerIdentity(request));
+    const result = await store.createReservation(request.body as any, getCallerIdentity(request));
     reply.status(201);
     return {
       reservationId: result.reservation.id,
@@ -200,9 +204,9 @@ export function buildServer(
       const params = request.params as { bookingReference: string };
       return { bookingReference: params.bookingReference };
     }
-  }, () => {
+  }, async () => {
     const params = request.params as { bookingReference: string };
-    const reservation = store.releaseReservationByBooking(params.bookingReference, getCallerIdentity(request));
+    const reservation = await store.releaseReservationByBooking(params.bookingReference, getCallerIdentity(request));
     return {
       reservationId: reservation.id,
       bookingReference: reservation.bookingReference,
@@ -219,7 +223,7 @@ export function buildServer(
     resourceType: "container",
     resourceId: (request) => (request.params as { id: string }).id,
     requestContext: (request) => ({ containerId: (request.params as { id: string }).id })
-  }, () => {
+  }, async () => {
     const params = request.params as { id: string };
     return store.pickupContainer(params.id, getCallerIdentity(request));
   }));
@@ -229,7 +233,7 @@ export function buildServer(
     resourceType: "container",
     resourceId: (request) => (request.params as { id: string }).id,
     requestContext: (request) => ({ containerId: (request.params as { id: string }).id })
-  }, () => {
+  }, async () => {
     const params = request.params as { id: string };
     return store.returnContainer(params.id, getCallerIdentity(request));
   }));
@@ -245,7 +249,7 @@ export function buildServer(
         bookingReference: body.payload?.bookingReference?.trim() ?? ""
       };
     }
-  }, () => {
+  }, async () => {
     const body = request.body as { eventType: string; payload: { bookingReference: string } };
     return store.consumeEvent(body.eventType, body.payload, getCallerIdentity(request));
   }));
@@ -375,12 +379,12 @@ async function auditedWrite<T>(
   try {
     const result = await execute();
     if (request.auth) {
-      recordAuditEvent(store, request.auth, spec, startedAt, AuditOutcome.SUCCESS, null, request, result);
+      await recordAuditEvent(store, request.auth, spec, startedAt, AuditOutcome.SUCCESS, null, request, result);
     }
     return result;
   } catch (error) {
     if (request.auth) {
-      recordAuditEvent(
+      await recordAuditEvent(
         store,
         request.auth,
         spec,
@@ -394,7 +398,7 @@ async function auditedWrite<T>(
   }
 }
 
-function recordAuditEvent<T>(
+async function recordAuditEvent<T>(
   store: EquipmentsStore,
   caller: AuthenticatedCaller,
   spec: AuditSpec<T>,
@@ -403,8 +407,8 @@ function recordAuditEvent<T>(
   errorMessage: string | null,
   request: AuditedRequest,
   result?: T
-): void {
-  store.recordAuditEvent({
+): Promise<void> {
+  await store.recordAuditEvent({
     actor: caller.subject,
     action: spec.action,
     resourceType: spec.resourceType,

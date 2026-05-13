@@ -103,7 +103,7 @@ test("write routes record successful audit events", async () => {
   });
 
   assert.equal(response.statusCode, 201);
-  const events = store.listAuditEvents();
+  const events = await store.listAuditEvents();
   assert.equal(events.length, 1);
   assert.equal(events[0].actor, "booking-service");
   assert.equal(events[0].action, "reservation.create");
@@ -133,7 +133,7 @@ test("failed write routes record failed audit events", async () => {
   });
 
   assert.equal(response.statusCode, 409);
-  const events = store.listAuditEvents();
+  const events = await store.listAuditEvents();
   assert.equal(events.length, 1);
   assert.equal(events[0].actor, "ops-user");
   assert.equal(events[0].action, "equipment_type.create");
@@ -149,7 +149,7 @@ test("read routes do not emit audit events", async () => {
   const response = await app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers: authHeader([Scope.READ]) });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(store.listAuditEvents(), []);
+  assert.deepEqual(await store.listAuditEvents(), []);
 });
 
 test("GET / redirects to the API playground", async () => {
@@ -195,6 +195,22 @@ test("GET /playground shows configured backend path when present", async () => {
   assert.equal(response.statusCode, 200);
   assert.match(response.body, /sqlite/);
   assert.match(response.body, /\/tmp\/equipments\.sqlite/);
+});
+
+test("GET /playground shows sanitized postgres backend label", async () => {
+  const app = buildServer(new EquipmentsStore(true), {
+    backend: StorageBackend.POSTGRES,
+    path: "",
+    connectionString: "postgres://equipments-user:super-secret@db.internal:5432/equipments_prod",
+    displayPath: "db.internal:5432/equipments_prod"
+  }, undefined, authConfig);
+  const response = await app.inject({ method: "GET", url: "/playground" });
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.body, /postgres/);
+  assert.match(response.body, /db\.internal:5432\/equipments_prod/);
+  assert.doesNotMatch(response.body, /super-secret/);
+  assert.doesNotMatch(response.body, /equipments-user/);
 });
 
 test("GET /playground hides reset controls outside development mode", async () => {

@@ -7,7 +7,7 @@ import type { StorePersistence, StoreSnapshot } from "./types.js";
 export class JsonFilePersistence implements StorePersistence {
   constructor(private readonly path: string) {}
 
-  load(): StoreSnapshot | null {
+  async load(): Promise<StoreSnapshot | null> {
     try {
       const raw = readFileSync(this.path, "utf8");
       if (!raw.trim()) {
@@ -22,7 +22,7 @@ export class JsonFilePersistence implements StorePersistence {
     }
   }
 
-  save(snapshot: StoreSnapshot): void {
+  async save(snapshot: StoreSnapshot): Promise<void> {
     mkdirSync(dirname(this.path), { recursive: true });
     writeFileSync(this.path, JSON.stringify(snapshot), "utf8");
   }

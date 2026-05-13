@@ -1,12 +1,13 @@
 import { DomainError } from "../errors.js";
 
 import {
+  STORAGE_POSTGRES_URL_ENV,
   type RuntimeConfig,
   STORAGE_BACKEND_ENV,
   STORAGE_DB_PATH_ENV,
+  StorageBackend,
   STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV,
   STORAGE_SQLITE_PATH_ENV,
-  StorageBackend,
   type StorageBackend as StorageBackendValue
 } from "./types.js";
 
@@ -25,6 +26,12 @@ export function normalizeBackend(raw: string | undefined): StorageBackendValue {
     case "persistent-sqlite":
     case "persistent-sqlite3":
       return StorageBackend.SQLITE;
+    case StorageBackend.POSTGRES:
+    case "postgresql":
+    case "pg":
+    case "persistent-postgres":
+    case "persistent-postgresql":
+      return StorageBackend.POSTGRES;
     default:
       throw new DomainError(`unsupported storage backend ${JSON.stringify(raw ?? "")}`);
   }
@@ -44,6 +51,21 @@ export function loadRuntimeConfig(env = process.env): RuntimeConfig {
     return { backend, path, sqliteEmptyOnFirstBoot: false };
   }
 
+  if (backend === StorageBackend.POSTGRES) {
+    const connectionString = env[STORAGE_POSTGRES_URL_ENV]?.trim() ?? "";
+    if (!connectionString) {
+      throw new DomainError(`${STORAGE_POSTGRES_URL_ENV} is required when ${STORAGE_BACKEND_ENV}=postgres`);
+    }
+
+    return {
+      backend,
+      path: "",
+      connectionString,
+      displayPath: summarizePostgresConnection(connectionString),
+      sqliteEmptyOnFirstBoot: false
+    };
+  }
+
   const path = env[STORAGE_SQLITE_PATH_ENV]?.trim() || env[STORAGE_DB_PATH_ENV]?.trim() || "";
   if (!path) {
     throw new DomainError(
@@ -56,6 +78,17 @@ export function loadRuntimeConfig(env = process.env): RuntimeConfig {
     path,
     sqliteEmptyOnFirstBoot: parseBooleanFlag(env[STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV])
   };
+}
+
+function summarizePostgresConnection(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    const database = url.pathname.replace(/^\//, "") || "postgres";
+    const port = url.port || "5432";
+    return `${url.hostname}:${port}/${database}`;
+  } catch {
+    return "configured via STORAGE_POSTGRES_URL";
+  }
 }
 
 function parseBooleanFlag(raw: string | undefined): boolean {

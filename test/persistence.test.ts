@@ -4,18 +4,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { newDb } from "pg-mem";
 
 import {
   createPersistence,
   loadRuntimeConfig,
   normalizeBackend,
+  POSTGRES_SCHEMA_VERSION,
   SQLITE_SCHEMA_VERSION,
   STORAGE_BACKEND_ENV,
   STORAGE_DB_PATH_ENV,
+  STORAGE_POSTGRES_URL_ENV,
   STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV,
   STORAGE_SQLITE_PATH_ENV,
   StorageBackend
 } from "../src/persistence/index.js";
+import { PostgresPersistence } from "../src/persistence/postgres.js";
 import { parseSnapshot } from "../src/persistence/snapshot.js";
 import type { StoreSnapshot } from "../src/persistence/index.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
@@ -93,6 +97,12 @@ test("normalizeBackend accepts sqlite aliases", () => {
   }
 });
 
+test("normalizeBackend accepts postgres aliases", () => {
+  for (const value of ["postgres", "postgresql", "pg", "persistent-postgres", "persistent-postgresql"]) {
+    assert.equal(normalizeBackend(value), StorageBackend.POSTGRES);
+  }
+});
+
 test("loadRuntimeConfig defaults to memory", () => {
   const config = loadRuntimeConfig({});
   assert.deepEqual(config, { backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false });
@@ -132,18 +142,80 @@ test("loadRuntimeConfig enables empty sqlite first boot when requested", () => {
   });
 });
 
-test("db backend persists store state across restarts", () => {
+test("loadRuntimeConfig requires postgres url", () => {
+  assert.throws(
+    () => loadRuntimeConfig({ [STORAGE_BACKEND_ENV]: StorageBackend.POSTGRES }),
+    /STORAGE_POSTGRES_URL is required/
+  );
+});
+
+test("loadRuntimeConfig sanitizes postgres display path", () => {
+  const config = loadRuntimeConfig({
+    [STORAGE_BACKEND_ENV]: "postgresql",
+    [STORAGE_POSTGRES_URL_ENV]: "postgres://equipments-user:super-secret@db.internal:5432/equipments_prod?sslmode=require"
+  });
+
+  assert.equal(config.backend, StorageBackend.POSTGRES);
+  assert.equal(config.connectionString, "postgres://equipments-user:super-secret@db.internal:5432/equipments_prod?sslmode=require");
+  assert.equal(config.displayPath, "db.internal:5432/equipments_prod");
+  assert.equal(config.path, "");
+});
+
+test("postgres backend round-trips snapshots with schema metadata", async () => {
+  const db = newDb();
+  const { Pool } = db.adapters.createPg();
+  const persistence = new PostgresPersistence("postgres://equipments:test@db/equipments", () => new Pool());
+  const snapshot = createSnapshot();
+
+  try {
+    await persistence.save(snapshot);
+
+    const loaded = await persistence.load();
+    const meta = await db.public.many(`SELECT schema_version, initialized, version FROM store_meta WHERE id = 1`);
+    const storedSnapshot = await db.public.many(`SELECT snapshot FROM store_snapshots WHERE id = 1`);
+
+    assert.deepEqual(normalizeSnapshot(loaded), snapshot);
+    assert.equal(meta[0].schema_version, POSTGRES_SCHEMA_VERSION);
+    assert.equal(meta[0].initialized, true);
+    assert.equal(Number(meta[0].version), 1);
+    assert.deepEqual(normalizeSnapshot(parseSnapshot(JSON.stringify(storedSnapshot[0].snapshot))), snapshot);
+  } finally {
+    await persistence.close();
+  }
+});
+
+test("postgres backend rejects stale writes with optimistic concurrency", async () => {
+  const db = newDb();
+  const { Pool } = db.adapters.createPg();
+  const persistence = new PostgresPersistence("postgres://equipments:test@db/equipments", () => new Pool());
+  const firstSnapshot = createSnapshot();
+  const secondSnapshot = createSnapshot();
+  secondSnapshot.equipmentTypes[0].description = "Conflicting description";
+
+  try {
+    const firstRead = await persistence.loadWithVersion();
+    const secondRead = await persistence.loadWithVersion();
+
+    assert.equal(await persistence.saveWithVersion(firstSnapshot, firstRead.version), true);
+    assert.equal(await persistence.saveWithVersion(secondSnapshot, secondRead.version), false);
+    assert.deepEqual(normalizeSnapshot(await persistence.load()), firstSnapshot);
+  } finally {
+    await persistence.close();
+  }
+});
+
+test("db backend persists store state across restarts", async () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-db-"));
   try {
     const path = join(dir, "equipments.json");
     const storeA = createStoreFromRuntimeConfig({ backend: StorageBackend.DB, path });
-    const created = storeA.createEquipmentType({
+    const created = await storeA.createEquipmentType({
       code: "45HC",
       description: "45-foot High Cube",
       nominalLength: "45'",
       maxPayloadKg: 29500
     });
-    storeA.recordAuditEvent({
+    await storeA.recordAuditEvent({
       actor: "ops-user",
       action: "equipment_type.create",
       resourceType: "equipment_type",
@@ -156,40 +228,40 @@ test("db backend persists store state across restarts", () => {
 
     const storeB = createStoreFromRuntimeConfig({ backend: StorageBackend.DB, path }, false);
     assert.equal(created.code, "45HC");
-    assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
-    assert.equal(storeB.listAuditEvents().length, 1);
-    assert.equal(storeB.listAuditEvents()[0].actor, "ops-user");
+    assert.ok((await storeB.listEquipmentTypes()).some((item) => item.code === "45HC"));
+    assert.equal((await storeB.listAuditEvents()).length, 1);
+    assert.equal((await storeB.listAuditEvents())[0].actor, "ops-user");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("db backend round-trips local users in persisted snapshots", () => {
+test("db backend round-trips local users in persisted snapshots", async () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-db-users-"));
   try {
     const path = join(dir, "equipments.json");
     const persistence = createPersistence({ backend: StorageBackend.DB, path });
     const snapshot = createSnapshot();
 
-    persistence.save(snapshot);
+    await persistence.save(snapshot);
 
-    assert.deepEqual(persistence.load(), snapshot);
+    assert.deepEqual(await persistence.load(), snapshot);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("sqlite backend persists store state across restarts", () => {
+test("sqlite backend persists store state across restarts", async () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-"));
   try {
     const path = join(dir, "equipments.sqlite");
     const storeA = createStoreFromRuntimeConfig({ backend: StorageBackend.SQLITE, path });
-    const created = storeA.registerContainer({
+    const created = await storeA.registerContainer({
       containerNumber: "CONU9999999",
       equipmentType: "20FT",
       currentDepot: "NLRTM-01"
     });
-    storeA.recordAuditEvent({
+    await storeA.recordAuditEvent({
       actor: "ops-user",
       action: "container.register",
       resourceType: "container",
@@ -202,43 +274,43 @@ test("sqlite backend persists store state across restarts", () => {
 
     const storeB = createStoreFromRuntimeConfig({ backend: StorageBackend.SQLITE, path }, false);
     assert.equal(created.containerNumber, "CONU9999999");
-    assert.ok(storeB.listContainers({ depot: "NLRTM-01" }).some((item) => item.containerNumber === "CONU9999999"));
-    assert.equal(storeB.listAuditEvents().length, 1);
-    assert.equal(storeB.listAuditEvents()[0].resourceId, created.id);
+    assert.ok((await storeB.listContainers({ depot: "NLRTM-01" })).some((item) => item.containerNumber === "CONU9999999"));
+    assert.equal((await storeB.listAuditEvents()).length, 1);
+    assert.equal((await storeB.listAuditEvents())[0].resourceId, created.id);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("sqlite backend stores state in relational tables", () => {
+test("sqlite backend stores state in relational tables", async () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-relational-"));
   try {
     const path = join(dir, "equipments.sqlite");
     const store = createStoreFromRuntimeConfig({ backend: StorageBackend.SQLITE, path }, false);
-    store.createEquipmentType({
+    await store.createEquipmentType({
       code: "45HC",
       description: "45-foot High Cube",
       nominalLength: "45'",
       maxPayloadKg: 29500
     });
 
-    const first = store.registerContainer({
+    const first = await store.registerContainer({
       containerNumber: "MSCU1234567",
       equipmentType: "45HC",
       currentDepot: "NLRTM-01"
     });
-    const second = store.registerContainer({
+    const second = await store.registerContainer({
       containerNumber: "MSCU1234568",
       equipmentType: "45HC",
       currentDepot: "NLRTM-01"
     });
 
-    const { reservation } = store.createReservation({
+    const { reservation } = await store.createReservation({
       bookingReference: "BOOK-45HC",
       originDepot: "NLRTM-01",
       equipment: [{ type: "45HC", quantity: 2 }]
     });
-    store.recordAuditEvent({
+    await store.recordAuditEvent({
       actor: "planner",
       action: "reservation.create",
       resourceType: "reservation",
@@ -288,16 +360,16 @@ test("sqlite backend stores state in relational tables", () => {
   }
 });
 
-test("sqlite backend persists local users in relational tables", () => {
+test("sqlite backend persists local users in relational tables", async () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-users-"));
   try {
     const path = join(dir, "equipments.sqlite");
     const persistence = createPersistence({ backend: StorageBackend.SQLITE, path });
     const snapshot = createSnapshot();
 
-    persistence.save(snapshot);
+    await persistence.save(snapshot);
 
-    const loaded = persistence.load();
+    const loaded = await persistence.load();
     const db = new DatabaseSync(path);
     const userRow = db
       .prepare(
@@ -362,14 +434,14 @@ test("parseSnapshot backfills new local user profile fields", () => {
   ]);
 });
 
-test("sqlite backend persists audit metadata columns for business records", () => {
+test("sqlite backend persists audit metadata columns for business records", async () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-audit-"));
   try {
     const path = join(dir, "equipments.sqlite");
     const persistence = createPersistence({ backend: StorageBackend.SQLITE, path });
     const snapshot = createSnapshot();
 
-    persistence.save(snapshot);
+    await persistence.save(snapshot);
 
     const db = new DatabaseSync(path);
     const equipmentTypeRow = db
@@ -438,7 +510,7 @@ test("sqlite backend persists audit metadata columns for business records", () =
   }
 });
 
-test("sqlite backend can start empty on first boot", () => {
+test("sqlite backend can start empty on first boot", async () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-empty-"));
   try {
     const path = join(dir, "equipments.sqlite");
@@ -446,10 +518,10 @@ test("sqlite backend can start empty on first boot", () => {
       { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true },
       true
     );
-    assert.deepEqual(storeA.listEquipmentTypes(), []);
-    assert.deepEqual(storeA.listContainers({}), []);
+    assert.deepEqual(await storeA.listEquipmentTypes(), []);
+    assert.deepEqual(await storeA.listContainers({}), []);
 
-    storeA.createEquipmentType({
+    await storeA.createEquipmentType({
       code: "45HC",
       description: "45-foot High Cube",
       nominalLength: "45'",
@@ -460,7 +532,7 @@ test("sqlite backend can start empty on first boot", () => {
       { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true },
       true
     );
-    assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
+    assert.ok((await storeB.listEquipmentTypes()).some((item) => item.code === "45HC"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -555,7 +627,7 @@ test("sqlite backend migrates older schema versions forward", () => {
   }
 });
 
-test("sqlite backend backfills user profile columns during migration", () => {
+test("sqlite backend backfills user profile columns during migration", async () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-users-migrate-"));
   try {
     const path = join(dir, "equipments.sqlite");
@@ -637,7 +709,7 @@ test("sqlite backend backfills user profile columns during migration", () => {
     `);
 
     const persistence = createPersistence({ backend: StorageBackend.SQLITE, path });
-    const loaded = persistence.load();
+    const loaded = await persistence.load();
     const userRow = db
       .prepare(
         `SELECT
@@ -698,20 +770,20 @@ test("sqlite backend rejects unsupported future schema versions", () => {
   }
 });
 
-test("memory backend does not persist across store recreation", () => {
+test("memory backend does not persist across store recreation", async () => {
   const storeA = createStoreFromRuntimeConfig({ backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false });
   const storeB = createStoreFromRuntimeConfig(
     { backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false },
     false
   );
 
-  storeA.createEquipmentType({
+  await storeA.createEquipmentType({
     code: "53FT",
     description: "Domestic 53-foot container",
     nominalLength: "53'",
     maxPayloadKg: 30000
   });
 
-  assert.equal(storeA.listEquipmentTypes().some((item) => item.code === "53FT"), true);
-  assert.equal(storeB.listEquipmentTypes().some((item) => item.code === "53FT"), false);
+  assert.equal((await storeA.listEquipmentTypes()).some((item) => item.code === "53FT"), true);
+  assert.equal((await storeB.listEquipmentTypes()).some((item) => item.code === "53FT"), false);
 });
