@@ -1,6 +1,7 @@
 import { DomainError } from "../errors.js";
 
 import {
+  STORAGE_POSTGRES_URL_ENV,
   type RuntimeConfig,
   STORAGE_BACKEND_ENV,
   STORAGE_DB_PATH_ENV,
@@ -25,6 +26,12 @@ export function normalizeBackend(raw: string | undefined): StorageBackendValue {
     case "persistent-sqlite":
     case "persistent-sqlite3":
       return StorageBackend.SQLITE;
+    case StorageBackend.POSTGRES:
+    case "postgresql":
+    case "postgresql-db":
+    case "persistent-postgres":
+    case "persistent-postgresql":
+      return StorageBackend.POSTGRES;
     default:
       throw new DomainError(`unsupported storage backend ${JSON.stringify(raw ?? "")}`);
   }
@@ -42,6 +49,21 @@ export function loadRuntimeConfig(env = process.env): RuntimeConfig {
       throw new DomainError(`${STORAGE_DB_PATH_ENV} is required when ${STORAGE_BACKEND_ENV}=db`);
     }
     return { backend, path, sqliteEmptyOnFirstBoot: false };
+  }
+
+  if (backend === StorageBackend.POSTGRES) {
+    const connectionString = env[STORAGE_POSTGRES_URL_ENV]?.trim() ?? "";
+    if (!connectionString) {
+      throw new DomainError(
+        `${STORAGE_POSTGRES_URL_ENV} is required when ${STORAGE_BACKEND_ENV}=postgres`
+      );
+    }
+    return {
+      backend,
+      path: "",
+      sqliteEmptyOnFirstBoot: false,
+      connectionString
+    };
   }
 
   const path = env[STORAGE_SQLITE_PATH_ENV]?.trim() || env[STORAGE_DB_PATH_ENV]?.trim() || "";

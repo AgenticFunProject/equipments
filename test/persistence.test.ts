@@ -9,13 +9,16 @@ import {
   createPersistence,
   loadRuntimeConfig,
   normalizeBackend,
+  POSTGRES_SCHEMA_VERSION,
   SQLITE_SCHEMA_VERSION,
   STORAGE_BACKEND_ENV,
   STORAGE_DB_PATH_ENV,
+  STORAGE_POSTGRES_URL_ENV,
   STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV,
   STORAGE_SQLITE_PATH_ENV,
   StorageBackend
 } from "../src/persistence/index.js";
+import { runPostgresMigrations } from "../src/persistence/migrations/index.js";
 import { parseSnapshot } from "../src/persistence/snapshot.js";
 import type { StoreSnapshot } from "../src/persistence/index.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
@@ -87,9 +90,81 @@ function normalizeRecord<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+class FakePgClient {
+  readonly tables = new Set<string>();
+  schemaVersion: number | null = null;
+
+  async query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> {
+    const normalized = sql.replace(/\s+/g, " ").trim();
+
+    if (normalized.startsWith("SELECT to_regclass('public.")) {
+      const tableName = normalized.match(/public\.([^']+)/)?.[1] ?? "";
+      return { rows: [{ table_name: this.tables.has(tableName) ? tableName : null }] };
+    }
+
+    if (normalized === "SELECT schema_version FROM store_meta WHERE id = 1") {
+      if (!this.tables.has("store_meta")) {
+        throw new Error('relation "store_meta" does not exist');
+      }
+      return { rows: this.schemaVersion === null ? [] : [{ schema_version: this.schemaVersion }] };
+    }
+
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS store_meta")) {
+      this.tables.add("store_meta");
+    }
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS store_snapshots")) {
+      this.tables.add("store_snapshots");
+    }
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS users")) {
+      this.tables.add("users");
+    }
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS equipment_types")) {
+      this.tables.add("equipment_types");
+    }
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS containers")) {
+      this.tables.add("containers");
+    }
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS reservations")) {
+      this.tables.add("reservations");
+    }
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS reservation_containers")) {
+      this.tables.add("reservation_containers");
+    }
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS audit_events")) {
+      this.tables.add("audit_events");
+    }
+    if (normalized.startsWith("INSERT INTO store_meta")) {
+      this.schemaVersion ??= 0;
+    }
+    if (normalized === "UPDATE store_meta SET schema_version = $1 WHERE id = 1") {
+      this.schemaVersion = Number(params?.[0] ?? 0);
+    }
+
+    return { rows: [] };
+  }
+
+  release(): void {}
+}
+
+class FakePgPool {
+  readonly client = new FakePgClient();
+
+  async connect(): Promise<FakePgClient> {
+    return this.client;
+  }
+
+  async end(): Promise<void> {}
+}
+
 test("normalizeBackend accepts sqlite aliases", () => {
   for (const value of ["sqlite", "sqlite3", "sql", "persistent-sqlite", "persistent-sqlite3"]) {
     assert.equal(normalizeBackend(value), StorageBackend.SQLITE);
+  }
+});
+
+test("normalizeBackend accepts postgres aliases", () => {
+  for (const value of ["postgres", "postgresql", "persistent-postgres", "persistent-postgresql"]) {
+    assert.equal(normalizeBackend(value), StorageBackend.POSTGRES);
   }
 });
 
@@ -130,6 +205,43 @@ test("loadRuntimeConfig enables empty sqlite first boot when requested", () => {
     path: "/tmp/equipments.sqlite",
     sqliteEmptyOnFirstBoot: true
   });
+});
+
+test("loadRuntimeConfig requires postgres url", () => {
+  assert.throws(
+    () => loadRuntimeConfig({ [STORAGE_BACKEND_ENV]: StorageBackend.POSTGRES }),
+    /STORAGE_POSTGRES_URL is required/
+  );
+});
+
+test("loadRuntimeConfig accepts postgres url", () => {
+  const config = loadRuntimeConfig({
+    [STORAGE_BACKEND_ENV]: StorageBackend.POSTGRES,
+    [STORAGE_POSTGRES_URL_ENV]: "postgres://equipments:test@localhost:5432/equipments"
+  });
+
+  assert.deepEqual(config, {
+    backend: StorageBackend.POSTGRES,
+    path: "",
+    sqliteEmptyOnFirstBoot: false,
+    connectionString: "postgres://equipments:test@localhost:5432/equipments"
+  });
+});
+
+test("postgres migrations initialize a fresh schema", async () => {
+  const pool = new FakePgPool();
+
+  const result = await runPostgresMigrations(
+    "postgres://equipments:test@localhost:5432/equipments",
+    () => pool
+  );
+
+  assert.deepEqual(result.executed, ["001-store-meta-and-snapshots", "002-relational-state"]);
+  assert.deepEqual(result.pending, []);
+  assert.equal(pool.client.schemaVersion, POSTGRES_SCHEMA_VERSION);
+  assert.equal(pool.client.tables.has("store_meta"), true);
+  assert.equal(pool.client.tables.has("audit_events"), true);
+  assert.equal(pool.client.tables.has("reservation_containers"), true);
 });
 
 test("db backend persists store state across restarts", () => {

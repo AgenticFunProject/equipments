@@ -10,12 +10,16 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json && mkdir -p dist/src/playground && cp src/playground/* dist/src/playground/",
+    "migrate": "node --import tsx src/persistence/migrate.ts",
+    "migrate:status": "node --import tsx src/persistence/migrate.ts status",
     "start": "node dist/src/index.js",
     "test": "node --import tsx --test test/**/*.test.ts",
     "sync:github-board": "node scripts/sync-github-board.mjs"
   },
   "dependencies": {
     "fastify": "^5.3.0",
+    "pg": "^8.16.3",
+    "umzug": "^3.8.3",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

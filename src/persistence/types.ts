@@ -3,7 +3,8 @@ import type { AuditEvent, ContainerUnit, EquipmentType, LocalUser, Reservation }
 export const StorageBackend = {
   MEMORY: "memory",
   DB: "db",
-  SQLITE: "sqlite"
+  SQLITE: "sqlite",
+  POSTGRES: "postgres"
 } as const;
 
 export type StorageBackend = (typeof StorageBackend)[keyof typeof StorageBackend];
@@ -12,7 +13,9 @@ export const STORAGE_BACKEND_ENV = "STORAGE_BACKEND";
 export const STORAGE_DB_PATH_ENV = "STORAGE_DB_PATH";
 export const STORAGE_SQLITE_PATH_ENV = "STORAGE_SQLITE_PATH";
 export const STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT_ENV = "STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT";
+export const STORAGE_POSTGRES_URL_ENV = "STORAGE_POSTGRES_URL";
 export const SQLITE_SCHEMA_VERSION = 4;
+export const POSTGRES_SCHEMA_VERSION = 2;
 
 export interface StoreSnapshot {
   auditEvents: AuditEvent[];
@@ -31,4 +34,5 @@ export interface RuntimeConfig {
   backend: StorageBackend;
   path: string;
   sqliteEmptyOnFirstBoot?: boolean;
+  connectionString?: string;
 }

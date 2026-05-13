@@ -138,186 +138,11 @@ export class SqlitePersistence implements StorePersistence {
   }
 
   save(snapshot: StoreSnapshot): void {
-    const upsertMeta = this.db.prepare(
-      "INSERT INTO store_meta (id, initialized) VALUES (1, 1) ON CONFLICT(id) DO UPDATE SET initialized = excluded.initialized"
-    );
-    const insertAuditEvent = this.db.prepare(
-      `INSERT INTO audit_events (
-        id,
-        actor,
-        action,
-        resource_type,
-        resource_id,
-        timestamp,
-        request_context,
-        outcome,
-        error_message
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertEquipmentType = this.db.prepare(
-      `INSERT INTO equipment_types (
-        code,
-        description,
-        nominal_length,
-        max_payload_kg,
-        created_by_user_id,
-        last_modified_by_user_id,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertUser = this.db.prepare(
-      `INSERT INTO users (
-        id,
-        external_identity,
-        issuer,
-        subject,
-        display_name,
-        email,
-        status,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertContainer = this.db.prepare(
-      `INSERT INTO containers (
-        id,
-        container_number,
-        equipment_type,
-        status,
-        current_depot,
-        booking_reference,
-        created_by_user_id,
-        last_modified_by_user_id,
-        last_moved_at,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertReservation = this.db.prepare(
-      `INSERT INTO reservations (
-        id,
-        booking_reference,
-        origin_depot,
-        status,
-        created_by_user_id,
-        last_modified_by_user_id,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertReservationContainer = this.db.prepare(
-      "INSERT INTO reservation_containers (reservation_id, container_id, order_index) VALUES (?, ?, ?)"
-    );
-
-    this.db.exec("BEGIN");
-    try {
-      upsertMeta.run();
-      this.db.exec(
-        "DELETE FROM audit_events; DELETE FROM reservation_containers; DELETE FROM reservations; DELETE FROM containers; DELETE FROM users; DELETE FROM equipment_types; DELETE FROM store_snapshots;"
-      );
-
-      for (const auditEvent of snapshot.auditEvents) {
-        insertAuditEvent.run(
-          auditEvent.id,
-          auditEvent.actor,
-          auditEvent.action,
-          auditEvent.resourceType,
-          auditEvent.resourceId,
-          auditEvent.timestamp,
-          JSON.stringify(auditEvent.requestContext),
-          auditEvent.outcome,
-          auditEvent.errorMessage
-        );
-      }
-
-      for (const equipmentType of snapshot.equipmentTypes) {
-        insertEquipmentType.run(
-          equipmentType.code,
-          equipmentType.description,
-          equipmentType.nominalLength,
-          equipmentType.maxPayloadKg,
-          equipmentType.createdByUserId,
-          equipmentType.lastModifiedByUserId,
-          equipmentType.createdAt,
-          equipmentType.updatedAt
-        );
-      }
-
-      for (const user of snapshot.users) {
-        insertUser.run(
-          user.id,
-          user.externalIdentity,
-          user.issuer,
-          user.subject,
-          user.displayName,
-          user.email,
-          user.status,
-          user.createdAt,
-          user.updatedAt
-        );
-      }
-
-      for (const container of snapshot.containers) {
-        insertContainer.run(
-          container.id,
-          container.containerNumber,
-          container.equipmentType,
-          container.status,
-          container.currentDepot,
-          container.bookingReference,
-          container.createdByUserId,
-          container.lastModifiedByUserId,
-          container.lastMovedAt,
-          container.createdAt,
-          container.updatedAt
-        );
-      }
-
-      for (const reservation of snapshot.reservations) {
-        insertReservation.run(
-          reservation.id,
-          reservation.bookingReference,
-          reservation.originDepot,
-          reservation.status,
-          reservation.createdByUserId,
-          reservation.lastModifiedByUserId,
-          reservation.createdAt,
-          reservation.updatedAt
-        );
-
-        reservation.containers.forEach((containerId, index) => {
-          insertReservationContainer.run(reservation.id, containerId, index);
-        });
-      }
-
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
-  }
-
-  private migrateLegacySnapshot(): void {
-    const meta = this.db.prepare("SELECT initialized FROM store_meta WHERE id = 1").get() as
-      | { initialized: number }
-      | undefined;
-    if (meta?.initialized) {
-      return;
-    }
-
-    const legacy = this.db.prepare("SELECT state FROM store_snapshots WHERE id = 1").get() as
-      | { state: string }
-      | undefined;
-    if (!legacy) {
-      return;
-    }
-
-    this.save(parseSnapshot(legacy.state));
+    writeSqliteSnapshot(this.db, snapshot);
   }
 
   private applyMigrations(): void {
-    const currentVersion = this.getSchemaVersion();
+    const currentVersion = getSqliteSchemaVersion(this.db);
     if (currentVersion > SQLITE_SCHEMA_VERSION) {
       throw new DomainError(
         `sqlite schema version ${currentVersion} is newer than supported version ${SQLITE_SCHEMA_VERSION}`,
@@ -327,7 +152,7 @@ export class SqlitePersistence implements StorePersistence {
 
     for (let version = currentVersion + 1; version <= SQLITE_SCHEMA_VERSION; version += 1) {
       this.runMigration(version);
-      this.setSchemaVersion(version);
+      setSqliteSchemaVersion(this.db, version);
     }
   }
 
@@ -406,78 +231,282 @@ export class SqlitePersistence implements StorePersistence {
         `);
         return;
       case 3:
-        this.ensureAuditMetadataColumns();
-        this.backfillAuditMetadata();
-        this.migrateLegacySnapshot();
+        ensureSqliteAuditMetadataColumns(this.db);
+        backfillSqliteAuditMetadata(this.db);
+        migrateLegacySqliteSnapshot(this.db);
         return;
       case 4:
-        this.ensureUserProfileColumns();
-        this.backfillUserProfileColumns();
+        ensureSqliteUserProfileColumns(this.db);
+        backfillSqliteUserProfileColumns(this.db);
         return;
       default:
         throw new DomainError(`unsupported sqlite migration ${version}`, 500);
     }
   }
+}
 
-  private getSchemaVersion(): number {
-    const row = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
-    return row.user_version;
+export function assertSqliteDatabasePathReady(path: string): void {
+  if (!path.trim()) {
+    throw new DomainError("sqlite database path is required", 500);
+  }
+}
+
+export function getSqliteSchemaVersion(db: DatabaseSync): number {
+  const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
+  return row.user_version;
+}
+
+export function setSqliteSchemaVersion(db: DatabaseSync, version: number): void {
+  db.exec(`PRAGMA user_version = ${version}`);
+}
+
+export function assertSqliteSchemaReady(db: DatabaseSync, path: string): void {
+  const currentVersion = getSqliteSchemaVersion(db);
+  if (currentVersion === 0) {
+    throw new DomainError(`sqlite schema is not initialized for ${path}; run npm run migrate first`, 500);
+  }
+  if (currentVersion > SQLITE_SCHEMA_VERSION) {
+    throw new DomainError(
+      `sqlite schema version ${currentVersion} is newer than supported version ${SQLITE_SCHEMA_VERSION}`,
+      500
+    );
+  }
+  if (currentVersion !== SQLITE_SCHEMA_VERSION) {
+    throw new DomainError(
+      `sqlite schema version ${currentVersion} does not match expected version ${SQLITE_SCHEMA_VERSION}; run npm run migrate first`,
+      500
+    );
+  }
+}
+
+export function migrateLegacySqliteSnapshot(db: DatabaseSync): void {
+  const meta = db.prepare("SELECT initialized FROM store_meta WHERE id = 1").get() as
+    | { initialized: number }
+    | undefined;
+  if (meta?.initialized) {
+    return;
   }
 
-  private setSchemaVersion(version: number): void {
-    this.db.exec(`PRAGMA user_version = ${version}`);
+  const legacy = db.prepare("SELECT state FROM store_snapshots WHERE id = 1").get() as
+    | { state: string }
+    | undefined;
+  if (!legacy) {
+    return;
   }
 
-  private ensureAuditMetadataColumns(): void {
-    this.ensureColumn("equipment_types", "created_by_user_id", "TEXT");
-    this.ensureColumn("equipment_types", "last_modified_by_user_id", "TEXT");
-    this.ensureColumn("equipment_types", "created_at", "TEXT");
-    this.ensureColumn("equipment_types", "updated_at", "TEXT");
-    this.ensureColumn("containers", "created_by_user_id", "TEXT");
-    this.ensureColumn("containers", "last_modified_by_user_id", "TEXT");
-    this.ensureColumn("containers", "updated_at", "TEXT");
-    this.ensureColumn("reservations", "created_by_user_id", "TEXT");
-    this.ensureColumn("reservations", "last_modified_by_user_id", "TEXT");
-    this.ensureColumn("reservations", "updated_at", "TEXT");
-  }
+  writeSqliteSnapshot(db, parseSnapshot(legacy.state));
+}
 
-  private ensureUserProfileColumns(): void {
-    this.ensureColumn("users", "external_identity", "TEXT");
-    this.ensureColumn("users", "display_name", "TEXT");
-    this.ensureColumn("users", "email", "TEXT");
-    this.ensureColumn("users", "status", "TEXT");
-    this.ensureColumn("users", "updated_at", "TEXT");
-  }
+export function ensureSqliteAuditMetadataColumns(db: DatabaseSync): void {
+  ensureSqliteColumn(db, "equipment_types", "created_by_user_id", "TEXT");
+  ensureSqliteColumn(db, "equipment_types", "last_modified_by_user_id", "TEXT");
+  ensureSqliteColumn(db, "equipment_types", "created_at", "TEXT");
+  ensureSqliteColumn(db, "equipment_types", "updated_at", "TEXT");
+  ensureSqliteColumn(db, "containers", "created_by_user_id", "TEXT");
+  ensureSqliteColumn(db, "containers", "last_modified_by_user_id", "TEXT");
+  ensureSqliteColumn(db, "containers", "updated_at", "TEXT");
+  ensureSqliteColumn(db, "reservations", "created_by_user_id", "TEXT");
+  ensureSqliteColumn(db, "reservations", "last_modified_by_user_id", "TEXT");
+  ensureSqliteColumn(db, "reservations", "updated_at", "TEXT");
+}
 
-  private ensureColumn(tableName: string, columnName: string, definition: string): void {
-    const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-    if (columns.some((column) => column.name === columnName)) {
-      return;
+export function backfillSqliteAuditMetadata(db: DatabaseSync): void {
+  db.exec(`
+    UPDATE equipment_types
+    SET created_at = COALESCE(created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+    UPDATE containers
+    SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+    UPDATE reservations
+    SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
+  `);
+}
+
+export function ensureSqliteUserProfileColumns(db: DatabaseSync): void {
+  ensureSqliteColumn(db, "users", "external_identity", "TEXT");
+  ensureSqliteColumn(db, "users", "display_name", "TEXT");
+  ensureSqliteColumn(db, "users", "email", "TEXT");
+  ensureSqliteColumn(db, "users", "status", "TEXT");
+  ensureSqliteColumn(db, "users", "updated_at", "TEXT");
+}
+
+export function backfillSqliteUserProfileColumns(db: DatabaseSync): void {
+  db.exec(`
+    UPDATE users
+    SET external_identity = COALESCE(external_identity, issuer || ':' || subject),
+        status = COALESCE(status, 'ACTIVE'),
+        updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
+  `);
+}
+
+function writeSqliteSnapshot(db: DatabaseSync, snapshot: StoreSnapshot): void {
+  const upsertMeta = db.prepare(
+    "INSERT INTO store_meta (id, initialized) VALUES (1, 1) ON CONFLICT(id) DO UPDATE SET initialized = excluded.initialized"
+  );
+  const insertAuditEvent = db.prepare(
+    `INSERT INTO audit_events (
+      id,
+      actor,
+      action,
+      resource_type,
+      resource_id,
+      timestamp,
+      request_context,
+      outcome,
+      error_message
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insertEquipmentType = db.prepare(
+    `INSERT INTO equipment_types (
+      code,
+      description,
+      nominal_length,
+      max_payload_kg,
+      created_by_user_id,
+      last_modified_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insertUser = db.prepare(
+    `INSERT INTO users (
+      id,
+      external_identity,
+      issuer,
+      subject,
+      display_name,
+      email,
+      status,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insertContainer = db.prepare(
+    `INSERT INTO containers (
+      id,
+      container_number,
+      equipment_type,
+      status,
+      current_depot,
+      booking_reference,
+      created_by_user_id,
+      last_modified_by_user_id,
+      last_moved_at,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insertReservation = db.prepare(
+    `INSERT INTO reservations (
+      id,
+      booking_reference,
+      origin_depot,
+      status,
+      created_by_user_id,
+      last_modified_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insertReservationContainer = db.prepare(
+    "INSERT INTO reservation_containers (reservation_id, container_id, order_index) VALUES (?, ?, ?)"
+  );
+
+  db.exec("BEGIN");
+  try {
+    upsertMeta.run();
+    db.exec(
+      "DELETE FROM audit_events; DELETE FROM reservation_containers; DELETE FROM reservations; DELETE FROM containers; DELETE FROM users; DELETE FROM equipment_types; DELETE FROM store_snapshots;"
+    );
+
+    for (const auditEvent of snapshot.auditEvents) {
+      insertAuditEvent.run(
+        auditEvent.id,
+        auditEvent.actor,
+        auditEvent.action,
+        auditEvent.resourceType,
+        auditEvent.resourceId,
+        auditEvent.timestamp,
+        JSON.stringify(auditEvent.requestContext),
+        auditEvent.outcome,
+        auditEvent.errorMessage
+      );
     }
 
-    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+    for (const equipmentType of snapshot.equipmentTypes) {
+      insertEquipmentType.run(
+        equipmentType.code,
+        equipmentType.description,
+        equipmentType.nominalLength,
+        equipmentType.maxPayloadKg,
+        equipmentType.createdByUserId,
+        equipmentType.lastModifiedByUserId,
+        equipmentType.createdAt,
+        equipmentType.updatedAt
+      );
+    }
+
+    for (const user of snapshot.users) {
+      insertUser.run(
+        user.id,
+        user.externalIdentity,
+        user.issuer,
+        user.subject,
+        user.displayName,
+        user.email,
+        user.status,
+        user.createdAt,
+        user.updatedAt
+      );
+    }
+
+    for (const container of snapshot.containers) {
+      insertContainer.run(
+        container.id,
+        container.containerNumber,
+        container.equipmentType,
+        container.status,
+        container.currentDepot,
+        container.bookingReference,
+        container.createdByUserId,
+        container.lastModifiedByUserId,
+        container.lastMovedAt,
+        container.createdAt,
+        container.updatedAt
+      );
+    }
+
+    for (const reservation of snapshot.reservations) {
+      insertReservation.run(
+        reservation.id,
+        reservation.bookingReference,
+        reservation.originDepot,
+        reservation.status,
+        reservation.createdByUserId,
+        reservation.lastModifiedByUserId,
+        reservation.createdAt,
+        reservation.updatedAt
+      );
+
+      reservation.containers.forEach((containerId, index) => {
+        insertReservationContainer.run(reservation.id, containerId, index);
+      });
+    }
+
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function ensureSqliteColumn(db: DatabaseSync, tableName: string, columnName: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) {
+    return;
   }
 
-  private backfillAuditMetadata(): void {
-    this.db.exec(`
-      UPDATE equipment_types
-      SET created_at = COALESCE(created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')),
-          updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-      UPDATE containers
-      SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-      UPDATE reservations
-      SET updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
-    `);
-  }
-
-  private backfillUserProfileColumns(): void {
-    this.db.exec(`
-      UPDATE users
-      SET external_identity = COALESCE(external_identity, issuer || ':' || subject),
-          status = COALESCE(status, 'ACTIVE'),
-          updated_at = COALESCE(updated_at, created_at, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'));
-    `);
-  }
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }
