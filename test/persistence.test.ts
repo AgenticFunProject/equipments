@@ -256,6 +256,9 @@ test("sqlite backend stores state in relational tables", () => {
       code: string;
       description: string;
     };
+    const indexNames = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name IN ('containers', 'reservations', 'reservation_containers', 'audit_events')")
+      .all() as Array<{ name: string }>;
     const containerCount = db.prepare("SELECT COUNT(*) AS count FROM containers").get() as { count: number };
     const reservationRow = db
       .prepare("SELECT booking_reference AS bookingReference, origin_depot AS originDepot FROM reservations WHERE id = ?")
@@ -279,6 +282,11 @@ test("sqlite backend stores state in relational tables", () => {
     assert.equal(reservationRow.originDepot, "NLRTM-01");
     assert.equal(auditRow.actor, "planner");
     assert.equal(auditRow.action, "reservation.create");
+    assert.ok(indexNames.some((index) => index.name === "idx_containers_availability"));
+    assert.ok(indexNames.some((index) => index.name === "idx_containers_booking_reference"));
+    assert.ok(indexNames.some((index) => index.name === "idx_reservations_origin_status"));
+    assert.ok(indexNames.some((index) => index.name === "idx_reservation_containers_container_id"));
+    assert.ok(indexNames.some((index) => index.name === "idx_audit_events_resource_time"));
     assert.deepEqual(
       links.map((item) => item.containerId),
       [first.id, second.id]
@@ -438,6 +446,56 @@ test("sqlite backend persists audit metadata columns for business records", () =
   }
 });
 
+test("sqlite backend enforces relational check constraints", () => {
+  const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-constraints-"));
+  try {
+    const path = join(dir, "equipments.sqlite");
+    createPersistence({ backend: StorageBackend.SQLITE, path });
+
+    const db = new DatabaseSync(path);
+    db.exec("PRAGMA foreign_keys = ON");
+
+    assert.throws(
+      () =>
+        db.prepare(
+          `INSERT INTO equipment_types (
+            code,
+            description,
+            nominal_length,
+            max_payload_kg,
+            created_by_user_id,
+            last_modified_by_user_id,
+            created_at,
+            updated_at
+          ) VALUES ('BAD', '', '20''', 1000, NULL, NULL, '2026-04-22T00:00:00.000Z', '2026-04-22T00:00:00.000Z')`
+        ).run(),
+      /constraint/i
+    );
+
+    assert.throws(
+      () =>
+        db.prepare(
+          `INSERT INTO containers (
+            id,
+            container_number,
+            equipment_type,
+            status,
+            current_depot,
+            booking_reference,
+            created_by_user_id,
+            last_modified_by_user_id,
+            last_moved_at,
+            created_at,
+            updated_at
+          ) VALUES ('ctr-1', 'MSCU1234567', 'NOPE', 'INVALID', 'NLRTM-01', NULL, NULL, NULL, '2026-04-22T00:00:00.000Z', '2026-04-22T00:00:00.000Z', '2026-04-22T00:00:00.000Z')`
+        ).run(),
+      /constraint/i
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("sqlite backend can start empty on first boot", () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-empty-"));
   try {
@@ -531,6 +589,9 @@ test("sqlite backend migrates older schema versions forward", () => {
     const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
     const usersTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").get() as { name: string };
     const auditTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'").get() as { name: string };
+    const legacySnapshotTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'store_snapshots'").get() as
+      | { name: string }
+      | undefined;
     const equipmentColumns = db.prepare("PRAGMA table_info(equipment_types)").all() as Array<{ name: string }>;
     const containerColumns = db.prepare("PRAGMA table_info(containers)").all() as Array<{ name: string }>;
     const reservationColumns = db.prepare("PRAGMA table_info(reservations)").all() as Array<{ name: string }>;
@@ -539,6 +600,7 @@ test("sqlite backend migrates older schema versions forward", () => {
     assert.equal(userVersion.user_version, SQLITE_SCHEMA_VERSION);
     assert.equal(usersTable.name, "users");
     assert.equal(auditTable.name, "audit_events");
+    assert.equal(legacySnapshotTable, undefined);
     assert.ok(userColumns.some((column) => column.name === "external_identity"));
     assert.ok(userColumns.some((column) => column.name === "display_name"));
     assert.ok(userColumns.some((column) => column.name === "email"));
