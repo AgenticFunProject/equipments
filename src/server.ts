@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 
 import { authenticateBearerToken, createBearerToken, type AuthenticatedCaller, type BearerAuthConfig, ensureScope, loadBearerAuthConfig, Scope } from "./auth.js";
 import { DomainError } from "./errors.js";
+import { getOpenApiDocument } from "./openapi.js";
 import { type RuntimeConfig, StorageBackend } from "./persistence/index.js";
 import { getPlaygroundScript, getPlaygroundStyle, renderApiPlayground } from "./playground.js";
 import { EquipmentsStore } from "./store.js";
@@ -84,6 +85,10 @@ export function buildServer(
   });
 
   app.get("/health", async () => ({ status: "ok", version: SERVICE_VERSION }));
+
+  app.get("/openapi.json", async (_request, reply) => {
+    reply.type("application/json; charset=utf-8").send(getOpenApiDocument());
+  });
 
   app.get("/equipment-types", async () => ({ equipmentTypes: store.listEquipmentTypes() }));
 
@@ -331,7 +336,7 @@ function requiredScopeForMethod(method: string): Scope {
 }
 
 function isPublicRoute(url: string): boolean {
-  return url === "/" || url === "/health" || url === "/playground" || url.startsWith("/playground/") || url === "/dev/generate-token";
+  return url === "/" || url === "/health" || url === "/openapi.json" || url === "/playground" || url.startsWith("/playground/") || url === "/dev/generate-token";
 }
 
 interface EquipmentTypeBody {

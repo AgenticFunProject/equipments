@@ -64,6 +64,27 @@ test("GET /health returns ok", async () => {
   assert.deepEqual(response.json(), { status: "ok", version: SERVICE_VERSION });
 });
 
+test("GET /openapi.json returns the OpenAPI document without auth", async () => {
+  const app = createApp();
+  const response = await app.inject({ method: "GET", url: "/openapi.json" });
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers["content-type"] ?? "", /^application\/json/);
+  const body = response.json() as {
+    openapi: string;
+    info: { title: string };
+    paths: Record<string, unknown>;
+    components: { securitySchemes: { bearerAuth: { type: string; scheme: string } } };
+  };
+  assert.equal(body.openapi, "3.1.0");
+  assert.equal(body.info.title, "Equipments Service API");
+  assert.ok(body.paths["/availability"]);
+  assert.ok(body.paths["/reservations"]);
+  assert.ok(body.paths["/events"]);
+  assert.equal(body.components.securitySchemes.bearerAuth.type, "http");
+  assert.equal(body.components.securitySchemes.bearerAuth.scheme, "bearer");
+});
+
 test("GET /equipment-types requires a bearer token", async () => {
   const app = createApp();
   const response = await app.inject({ method: "GET", url: "/equipment-types" });
@@ -177,6 +198,7 @@ test("GET /playground serves the HTML playground", async () => {
   assert.match(response.body, /equipments:read/);
   assert.match(response.body, /equipments:modify/);
   assert.match(response.body, /GET \/health/);
+  assert.match(response.body, /\/openapi\.json/);
   assert.match(response.body, /memory/);
   assert.match(response.body, /\/playground\/playground\.css/);
   assert.match(response.body, /\/playground\/playground\.js/);

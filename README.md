@@ -189,6 +189,8 @@ Service starts on `http://0.0.0.0:3000` by default.
 
 `GET /health` remains unauthenticated. All other routes require `Authorization: Bearer <token>`.
 
+Machine-readable API documentation is exposed at `GET /openapi.json`. The browser playground also links to that document directly.
+
 Bearer token configuration is driven by these environment variables:
 
 - `AUTH_JWT_ISSUER` defaults to `platform-auth`
