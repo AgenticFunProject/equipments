@@ -18,7 +18,7 @@ import {
   STORAGE_SQLITE_PATH_ENV,
   StorageBackend
 } from "../src/persistence/index.js";
-import { runPostgresMigrations } from "../src/persistence/migrations/index.js";
+import { runPostgresMigrations, runSqliteMigrations } from "../src/persistence/migrations/index.js";
 import { parseSnapshot } from "../src/persistence/snapshot.js";
 import type { StoreSnapshot } from "../src/persistence/index.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
@@ -279,6 +279,25 @@ test("postgres migrations initialize a fresh schema", async () => {
   assert.equal(pool.client.tables.has("store_meta"), true);
   assert.equal(pool.client.tables.has("audit_events"), true);
   assert.equal(pool.client.tables.has("reservation_containers"), true);
+});
+
+test("sqlite migrations keep the database open until the async plan completes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "equipments-sqlite-run-migrate-"));
+
+  try {
+    const path = join(dir, "equipments.sqlite");
+    const result = await runSqliteMigrations(path, "status");
+
+    assert.deepEqual(result.executed, []);
+    assert.deepEqual(result.pending, [
+      "001-initial-schema",
+      "002-audit-and-users",
+      "003-audit-metadata-and-legacy-snapshot",
+      "004-user-profiles"
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test(

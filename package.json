@@ -1,6 +1,6 @@
 {
   "name": "equipments-service",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Container equipments and inventory service",
   "type": "module",
@@ -10,8 +10,10 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json && mkdir -p dist/src/playground && cp src/playground/* dist/src/playground/",
-    "migrate": "node --import tsx src/persistence/migrate.ts",
-    "migrate:status": "node --import tsx src/persistence/migrate.ts status",
+    "migrate": "node dist/src/persistence/migrate.js",
+    "migrate:status": "node dist/src/persistence/migrate.js status",
+    "migrate:dev": "node --import tsx src/persistence/migrate.ts",
+    "migrate:status:dev": "node --import tsx src/persistence/migrate.ts status",
     "start": "node dist/src/index.js",
     "test": "node --import tsx --test test/**/*.test.ts",
     "sync:github-board": "node scripts/sync-github-board.mjs"

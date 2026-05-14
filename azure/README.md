@@ -36,7 +36,7 @@ docker build -t <registry>.azurecr.io/equipments-service:<image-tag> .
 docker push <registry>.azurecr.io/equipments-service:<image-tag>
 ```
 
-The repo includes a production `Dockerfile` that builds `dist/` and starts the service with `node dist/src/index.js`.
+The repo includes a production `Dockerfile` that builds `dist/` and starts the service with `node dist/src/index.js`. The matching `npm run migrate` script also targets `dist/src/persistence/migrate.js`, so the migration job runs against the same compiled runtime layout as the service container.
 
 ## Deploy Workflow
 

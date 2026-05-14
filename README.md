@@ -245,41 +245,53 @@ npm run migrate
 npm run migrate:status
 ```
 
-Run them with the same backend environment variables you plan to use at startup.
+Those commands target the compiled `dist/` output so the same entrypoints work inside the production runtime image and after a local `npm run build`.
+For source-based local development without a build step, use:
+
+```bash
+npm run migrate:dev
+npm run migrate:status:dev
+```
+
+Run the migration command with the same backend environment variables you plan to use at startup.
 
 Startup and migration expectations by backend:
 
 - `memory`: no persistence, no migration step
 - `db`: JSON snapshot persistence, no migration step
-- `sqlite`: use `STORAGE_SQLITE_PATH` (or the fallback `STORAGE_DB_PATH`), then run `npm run migrate` before first boot in local setup, CI, or deployment when you want an explicit schema step
-- `postgres`: use `STORAGE_POSTGRES_URL`, run `npm run migrate`, then start the service against the migrated database
+- `sqlite`: use `STORAGE_SQLITE_PATH` (or the fallback `STORAGE_DB_PATH`), then run `npm run migrate:dev` for local source-based setup or `npm run migrate` after a build when you want the production-compatible entrypoint
+- `postgres`: use `STORAGE_POSTGRES_URL`, run `npm run migrate:dev` for local source-based setup or `npm run migrate` after a build, then start the service against the migrated database
 
 Examples:
 
 ```bash
-# inspect pending SQLite migrations
-STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate:status
+# inspect pending SQLite migrations from source during local development
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate:status:dev
 
-# apply SQLite migrations explicitly, then start the service
-STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate
+# apply SQLite migrations explicitly from source, then start the service
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate:dev
 STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run dev
 
-# apply PostgreSQL migrations, then start the service
+# apply PostgreSQL migrations from source, then start the service
 STORAGE_BACKEND=postgres \
 STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments \
-npm run migrate
+npm run migrate:dev
 STORAGE_BACKEND=postgres \
 STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments \
 npm run dev
+
+# apply migrations through the compiled production-compatible entrypoint
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run build
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate
 ```
 
 Backend-specific notes:
 
-- SQLite startup still applies missing schema migrations when the service opens the database file, so `npm run migrate` is mainly for an explicit pre-start workflow and deployment parity
+- SQLite startup still applies missing schema migrations when the service opens the database file, so `npm run migrate:dev` is mainly for an explicit pre-start workflow and `npm run migrate` is the production-compatible equivalent after a build
 - `STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true` only affects whether the seeded baseline data is inserted after a new SQLite database is created; it does not skip schema creation
 - PostgreSQL startup validates the migrated schema before the HTTP server begins listening
 
-Production deployments on Azure Container Apps should run `npm run migrate` as a separate pre-deploy job before updating the app revision; see `azure/README.md` for the runbook and YAML scaffolding.
+Production deployments on Azure Container Apps should run `npm run migrate` as a separate pre-deploy job before updating the app revision; that command now executes compiled `dist/` output, matching the production image layout. See `azure/README.md` for the runbook and YAML scaffolding.
 
 ### Workflow Policy
 
@@ -348,21 +360,22 @@ npm run dev
 # JSON file persistence
 STORAGE_BACKEND=db STORAGE_DB_PATH=.data/equipments.json npm run dev
 
-# SQLite persistence with an explicit migration step
-STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate
+# SQLite persistence with an explicit migration step from source
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate:dev
 STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run dev
 
 # SQLite persistence without seeded baseline data on first boot
-STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true npm run migrate
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true npm run migrate:dev
 STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true npm run dev
 
 # PostgreSQL persistence
-STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run migrate
+STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run migrate:dev
 STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run dev
 ```
 
 ### PostgreSQL Verification
 
-- Apply the schema before startup: `STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run migrate`
+- Apply the schema before startup in local source-based workflows: `STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run migrate:dev`
+- Apply the schema before startup with the compiled production-compatible entrypoint: `STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run build && STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run migrate`
 - Start the service against PostgreSQL: `STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run dev`
 - Run the automated PostgreSQL persistence test when a local PostgreSQL server is available: `TEST_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/postgres npm test`

@@ -73,7 +73,7 @@ export async function runSqliteMigrations(path: string, action: MigrationAction 
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   try {
-    return runMigrationPlan({ db }, SQLITE_MIGRATIONS, new SqliteVersionStorage(db, SQLITE_MIGRATIONS.map((migration) => migration.name)), action);
+    return await runMigrationPlan({ db }, SQLITE_MIGRATIONS, new SqliteVersionStorage(db, SQLITE_MIGRATIONS.map((migration) => migration.name)), action);
   } finally {
     db.close();
   }
@@ -91,7 +91,7 @@ export async function runPostgresMigrations(
   try {
     const migrationContext = await createPostgresMigrationContext(pool);
     try {
-      return runMigrationPlan(
+      return await runMigrationPlan(
         migrationContext.context,
         POSTGRES_MIGRATIONS,
         new PostgresVersionStorage(pool, POSTGRES_MIGRATIONS.map((migration) => migration.name)),

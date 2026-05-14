@@ -25,13 +25,15 @@ rm -f .data/demo-equipments.sqlite
 STORAGE_BACKEND=sqlite \
 STORAGE_SQLITE_PATH=.data/demo-equipments.sqlite \
 STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true \
-npm run migrate
+npm run migrate:dev
 
 STORAGE_BACKEND=sqlite \
 STORAGE_SQLITE_PATH=.data/demo-equipments.sqlite \
 STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true \
 npm run dev
 ```
+
+If you want to verify the production-compatible compiled entrypoint locally, run `npm run build` first and then swap `npm run migrate:dev` for `npm run migrate`.
 
 The service will be available at `http://localhost:3000`.
 

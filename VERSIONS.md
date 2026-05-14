@@ -5,6 +5,7 @@ Every service version bump must add or update an entry in this file.
 ## Unreleased
 
 - Added Azure Container Apps deployment scaffolding and a PostgreSQL-first production runbook covering Key Vault secrets, health probes, replica defaults, migration order, verification, and rollback guidance.
+- Changed `npm run migrate` and `npm run migrate:status` to execute compiled `dist/` output so the production migration job works inside the runtime image, and added `migrate:dev` aliases for source-based local workflows.
 
 ## 0.2.0
 
