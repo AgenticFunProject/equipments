@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json && mkdir -p dist/src/playground && cp src/playground/* dist/src/playground/",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/src/playground && cp src/playground/* dist/src/playground/ && cp package.json dist/package.json",
     "migrate": "node dist/src/persistence/migrate.js",
     "migrate:status": "node dist/src/persistence/migrate.js status",
     "migrate:dev": "node --import tsx src/persistence/migrate.ts",
