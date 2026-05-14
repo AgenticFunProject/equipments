@@ -157,7 +157,7 @@ AVAILABLE → RESERVED → DISPATCHED ──┬──→ RETURNED → AVAILABLE
 
 This repository now includes a runnable TypeScript/Node implementation of the service:
 
-- Runtime: Node 20+ with Fastify
+- Runtime: Node 22.5+ with Fastify
 - Source: `src/`
 - Tests: `test/service.test.ts`
 
@@ -175,6 +175,9 @@ Install dependencies first:
 ```bash
 npm install
 ```
+
+Use Node 22.5 or newer for local development and production builds because the
+service imports the built-in `node:sqlite` module.
 
 Default local development uses the in-memory backend, which needs no migration step:
 
