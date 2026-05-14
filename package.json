@@ -1,11 +1,11 @@
 {
   "name": "equipments-service",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Container equipments and inventory service",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5.0"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
