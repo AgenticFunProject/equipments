@@ -17,10 +17,16 @@ By the end of the demo you will have:
 
 ## Start From Empty State
 
-Use SQLite persistence with an empty first boot so the service starts with no seeded data:
+Use SQLite persistence with an empty first boot so the service starts with no seeded data.
+Run the migration command explicitly first, then start the service with the same backend settings:
 
 ```bash
 rm -f .data/demo-equipments.sqlite
+STORAGE_BACKEND=sqlite \
+STORAGE_SQLITE_PATH=.data/demo-equipments.sqlite \
+STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true \
+npm run migrate
+
 STORAGE_BACKEND=sqlite \
 STORAGE_SQLITE_PATH=.data/demo-equipments.sqlite \
 STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true \

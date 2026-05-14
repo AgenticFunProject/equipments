@@ -170,8 +170,15 @@ This repository now includes a runnable TypeScript/Node implementation of the se
 
 ### Run Locally
 
+Install dependencies first:
+
 ```bash
 npm install
+```
+
+Default local development uses the in-memory backend, which needs no migration step:
+
+```bash
 npm run dev
 ```
 
@@ -228,6 +235,46 @@ npm test
 
 For a full API walkthrough that starts from an empty database and creates all demo data through the service, see `DEMO.md`.
 
+### Migration Workflow
+
+The repo exposes explicit migration commands for relational backends:
+
+```bash
+npm run migrate
+npm run migrate:status
+```
+
+Run them with the same backend environment variables you plan to use at startup.
+
+Startup and migration expectations by backend:
+
+- `memory`: no persistence, no migration step
+- `db`: JSON snapshot persistence, no migration step
+- `sqlite`: use `STORAGE_SQLITE_PATH` (or the fallback `STORAGE_DB_PATH`), then run `npm run migrate` before first boot in local setup, CI, or deployment when you want an explicit schema step
+- `postgres`: use `STORAGE_POSTGRES_URL` with `npm run migrate` to initialize or inspect the schema, but do not start the service with `STORAGE_BACKEND=postgres` yet because PostgreSQL runtime persistence is not wired into `src/index.ts`
+
+Examples:
+
+```bash
+# inspect pending SQLite migrations
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate:status
+
+# apply SQLite migrations explicitly, then start the service
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run dev
+
+# apply PostgreSQL migrations only
+STORAGE_BACKEND=postgres \
+STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments \
+npm run migrate
+```
+
+Backend-specific notes:
+
+- SQLite startup still applies missing schema migrations when the service opens the database file, so `npm run migrate` is mainly for an explicit pre-start workflow and deployment parity
+- `STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true` only affects whether the seeded baseline data is inserted after a new SQLite database is created; it does not skip schema creation
+- PostgreSQL migrations create and upgrade the relational schema, but the runtime service currently throws if you try to use PostgreSQL as the active persistence backend
+
 ### Workflow Policy
 
 - Every repo change must have a beads ticket before implementation starts.
@@ -282,6 +329,7 @@ Environment variables:
 - `STORAGE_DB_PATH` is required when `STORAGE_BACKEND=db`
 - `STORAGE_SQLITE_PATH` is preferred when `STORAGE_BACKEND=sqlite`
 - `STORAGE_DB_PATH` is also accepted as a fallback for `sqlite`
+- `STORAGE_POSTGRES_URL` is required when `STORAGE_BACKEND=postgres`
 - `STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true` skips seeded baseline data when a SQLite database is created for the first time
 
 Examples:
@@ -293,9 +341,14 @@ npm run dev
 # JSON file persistence
 STORAGE_BACKEND=db STORAGE_DB_PATH=.data/equipments.json npm run dev
 
-# SQLite persistence
+# SQLite persistence with an explicit migration step
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run migrate
 STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite npm run dev
 
 # SQLite persistence without seeded baseline data on first boot
+STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true npm run migrate
 STORAGE_BACKEND=sqlite STORAGE_SQLITE_PATH=.data/equipments.sqlite STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true npm run dev
+
+# PostgreSQL schema migration only (runtime backend not yet supported)
+STORAGE_BACKEND=postgres STORAGE_POSTGRES_URL=postgres://equipments:equipments@localhost:5432/equipments npm run migrate
 ```
