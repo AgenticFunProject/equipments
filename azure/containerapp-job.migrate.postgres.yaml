@@ -1,0 +1,46 @@
+location: <azure-region>
+name: equipments-migrate
+resourceGroup: <resource-group>
+type: Microsoft.App/jobs
+identity:
+  type: SystemAssigned
+properties:
+  environmentId: /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.App/managedEnvironments/<container-app-environment>
+  configuration:
+    triggerType: Manual
+    replicaRetryLimit: 1
+    replicaTimeout: 1800
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+    secrets:
+      - name: auth-jwt-secret
+        keyVaultUrl: https://<key-vault-name>.vault.azure.net/secrets/auth-jwt-secret
+        identity: system
+      - name: storage-postgres-url
+        keyVaultUrl: https://<key-vault-name>.vault.azure.net/secrets/storage-postgres-url
+        identity: system
+  template:
+    containers:
+      - name: migrate
+        image: <registry>.azurecr.io/equipments-service:<image-tag>
+        command:
+          - npm
+          - run
+          - migrate
+        env:
+          - name: NODE_ENV
+            value: production
+          - name: STORAGE_BACKEND
+            value: postgres
+          - name: STORAGE_POSTGRES_URL
+            secretRef: storage-postgres-url
+          - name: AUTH_JWT_ISSUER
+            value: platform-auth
+          - name: AUTH_JWT_AUDIENCE
+            value: equipments-service
+          - name: AUTH_JWT_SECRET
+            secretRef: auth-jwt-secret
+        resources:
+          cpu: 0.5
+          memory: 1Gi

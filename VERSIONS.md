@@ -4,7 +4,7 @@ Every service version bump must add or update an entry in this file.
 
 ## Unreleased
 
-- No unreleased changes recorded yet.
+- Added Azure Container Apps deployment scaffolding and a PostgreSQL-first production runbook covering Key Vault secrets, health probes, replica defaults, migration order, verification, and rollback guidance.
 
 ## 0.2.0
 

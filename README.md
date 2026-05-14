@@ -234,6 +234,7 @@ npm test
 ```
 
 For a full API walkthrough that starts from an empty database and creates all demo data through the service, see `DEMO.md`.
+For Azure Container Apps production deployment guidance with PostgreSQL, see `azure/README.md`.
 
 ### Migration Workflow
 
@@ -277,6 +278,8 @@ Backend-specific notes:
 - SQLite startup still applies missing schema migrations when the service opens the database file, so `npm run migrate` is mainly for an explicit pre-start workflow and deployment parity
 - `STORAGE_SQLITE_EMPTY_ON_FIRST_BOOT=true` only affects whether the seeded baseline data is inserted after a new SQLite database is created; it does not skip schema creation
 - PostgreSQL startup validates the migrated schema before the HTTP server begins listening
+
+Production deployments on Azure Container Apps should run `npm run migrate` as a separate pre-deploy job before updating the app revision; see `azure/README.md` for the runbook and YAML scaffolding.
 
 ### Workflow Policy
 

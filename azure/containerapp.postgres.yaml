@@ -1,0 +1,76 @@
+location: <azure-region>
+name: equipments-service
+resourceGroup: <resource-group>
+type: Microsoft.App/containerApps
+identity:
+  type: SystemAssigned
+properties:
+  managedEnvironmentId: /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.App/managedEnvironments/<container-app-environment>
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: true
+      allowInsecure: false
+      targetPort: 3000
+      transport: auto
+    secrets:
+      - name: auth-jwt-secret
+        keyVaultUrl: https://<key-vault-name>.vault.azure.net/secrets/auth-jwt-secret
+        identity: system
+      - name: storage-postgres-url
+        keyVaultUrl: https://<key-vault-name>.vault.azure.net/secrets/storage-postgres-url
+        identity: system
+  template:
+    containers:
+      - name: equipments-service
+        image: <registry>.azurecr.io/equipments-service:<image-tag>
+        env:
+          - name: NODE_ENV
+            value: production
+          - name: HOST
+            value: 0.0.0.0
+          - name: PORT
+            value: "3000"
+          - name: STORAGE_BACKEND
+            value: postgres
+          - name: STORAGE_POSTGRES_URL
+            secretRef: storage-postgres-url
+          - name: AUTH_JWT_ISSUER
+            value: platform-auth
+          - name: AUTH_JWT_AUDIENCE
+            value: equipments-service
+          - name: AUTH_JWT_SECRET
+            secretRef: auth-jwt-secret
+        probes:
+          - type: Startup
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 30
+          - type: Liveness
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 4
+          - type: Readiness
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+    scale:
+      minReplicas: 2
+      maxReplicas: 10
+      rules:
+        - name: http-concurrency
+          http:
+            metadata:
+              concurrentRequests: "50"
