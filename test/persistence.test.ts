@@ -22,6 +22,7 @@ import { runPostgresMigrations } from "../src/persistence/migrations/index.js";
 import { parseSnapshot } from "../src/persistence/snapshot.js";
 import type { StoreSnapshot } from "../src/persistence/index.js";
 import { createStoreFromRuntimeConfig } from "../src/store.js";
+import { ContainerStatus } from "../src/types.js";
 
 function createSnapshot(): StoreSnapshot {
   return {
@@ -156,6 +157,42 @@ class FakePgPool {
   async end(): Promise<void> {}
 }
 
+async function createTemporaryPostgresDatabase(baseConnectionString: string): Promise<{ connectionString: string; cleanup: () => Promise<void> }> {
+  const { Pool } = await import("pg");
+  const adminUrl = new URL(baseConnectionString);
+  adminUrl.pathname = "/postgres";
+
+  const databaseName = `equipments_test_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const quotedName = quotePostgresIdentifier(databaseName);
+  const adminPool = new Pool({ connectionString: adminUrl.toString() });
+  const adminClient = await adminPool.connect();
+  await adminClient.query(`CREATE DATABASE ${quotedName}`);
+  adminClient.release();
+  await adminPool.end();
+
+  const databaseUrl = new URL(baseConnectionString);
+  databaseUrl.pathname = `/${databaseName}`;
+
+  return {
+    connectionString: databaseUrl.toString(),
+    cleanup: async () => {
+      const cleanupPool = new Pool({ connectionString: adminUrl.toString() });
+      const cleanupClient = await cleanupPool.connect();
+      await cleanupClient.query(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+        [databaseName]
+      );
+      await cleanupClient.query(`DROP DATABASE IF EXISTS ${quotedName}`);
+      cleanupClient.release();
+      await cleanupPool.end();
+    }
+  };
+}
+
+function quotePostgresIdentifier(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
 test("normalizeBackend accepts sqlite aliases", () => {
   for (const value of ["sqlite", "sqlite3", "sql", "persistent-sqlite", "persistent-sqlite3"]) {
     assert.equal(normalizeBackend(value), StorageBackend.SQLITE);
@@ -243,6 +280,68 @@ test("postgres migrations initialize a fresh schema", async () => {
   assert.equal(pool.client.tables.has("audit_events"), true);
   assert.equal(pool.client.tables.has("reservation_containers"), true);
 });
+
+test(
+  "postgres backend persists store state across restarts",
+  { skip: !process.env.TEST_POSTGRES_URL },
+  async () => {
+    const temporaryDatabase = await createTemporaryPostgresDatabase(process.env.TEST_POSTGRES_URL ?? "");
+
+    try {
+      await runPostgresMigrations(temporaryDatabase.connectionString);
+
+      const config = {
+        backend: StorageBackend.POSTGRES,
+        path: "",
+        sqliteEmptyOnFirstBoot: false,
+        connectionString: temporaryDatabase.connectionString
+      } as const;
+
+      const storeA = createStoreFromRuntimeConfig(config, false);
+      storeA.createEquipmentType({
+        code: "45HC",
+        description: "45-foot High Cube",
+        nominalLength: "45'",
+        maxPayloadKg: 29500
+      });
+      const first = storeA.registerContainer({
+        containerNumber: "MSCU1234567",
+        equipmentType: "45HC",
+        currentDepot: "NLRTM-01"
+      });
+      const second = storeA.registerContainer({
+        containerNumber: "MSCU1234568",
+        equipmentType: "45HC",
+        currentDepot: "NLRTM-01"
+      });
+      const created = storeA.createReservation({
+        bookingReference: "BOOK-PG-45HC",
+        originDepot: "NLRTM-01",
+        equipment: [{ type: "45HC", quantity: 2 }]
+      });
+      storeA.pickupContainer(created.assignedContainers[0].containerId);
+
+      const storeB = createStoreFromRuntimeConfig(config, false);
+      assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
+      assert.deepEqual(
+        storeB.listContainers({ depot: "NLRTM-01" }).map((item) => ({ id: item.id, status: item.status, containerNumber: item.containerNumber })),
+        [
+          { id: first.id, status: ContainerStatus.DISPATCHED, containerNumber: "MSCU1234567" },
+          { id: second.id, status: ContainerStatus.RESERVED, containerNumber: "MSCU1234568" }
+        ]
+      );
+      assert.deepEqual(storeB.getContainer(created.assignedContainers[0].containerId).status, ContainerStatus.DISPATCHED);
+      assert.deepEqual(storeB.getContainer(created.assignedContainers[1].containerId).status, ContainerStatus.RESERVED);
+
+      storeB.returnContainer(created.assignedContainers[0].containerId);
+
+      const storeC = createStoreFromRuntimeConfig(config, false);
+      assert.deepEqual(storeC.getContainer(created.assignedContainers[0].containerId).status, ContainerStatus.AVAILABLE);
+    } finally {
+      await temporaryDatabase.cleanup();
+    }
+  }
+);
 
 test("db backend persists store state across restarts", () => {
   const dir = mkdtempSync(join(tmpdir(), "equipments-db-"));

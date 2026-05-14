@@ -1,5 +1,6 @@
 import { JsonFilePersistence } from "./json-file.js";
 import { MemoryPersistence } from "./memory.js";
+import { PostgresPersistence } from "./postgres.js";
 import { SqlitePersistence } from "./sqlite.js";
 import { StorageBackend, type RuntimeConfig, type StorePersistence } from "./types.js";
 
@@ -42,6 +43,6 @@ export function createPersistence(config: RuntimeConfig): StorePersistence {
     case StorageBackend.SQLITE:
       return new SqlitePersistence(config.path);
     case StorageBackend.POSTGRES:
-      throw new Error("postgres runtime persistence is not implemented yet; run migrations separately");
+      return new PostgresPersistence(config.connectionString ?? "");
   }
 }
