@@ -4,7 +4,6 @@ import { SqlitePersistence } from "./sqlite.js";
 import { StorageBackend, type RuntimeConfig, type StorePersistence } from "./types.js";
 
 export { loadRuntimeConfig, normalizeBackend } from "./runtime-config.js";
-export { assertRuntimeSchemaReady, runMigrations } from "./migrations/index.js";
 export {
   POSTGRES_SCHEMA_VERSION,
   SQLITE_SCHEMA_VERSION,
@@ -18,6 +17,21 @@ export {
   type StorePersistence,
   type StoreSnapshot
 } from "./types.js";
+
+export type MigrationAction = "up" | "status";
+
+export async function runMigrations(
+  config: RuntimeConfig,
+  action: MigrationAction = "up"
+): Promise<{ executed: string[]; pending: string[] }> {
+  const migrations = await import("./migrations/index.js");
+  return migrations.runMigrations(config, action);
+}
+
+export async function assertRuntimeSchemaReady(config: RuntimeConfig): Promise<void> {
+  const migrations = await import("./migrations/index.js");
+  return migrations.assertRuntimeSchemaReady(config);
+}
 
 export function createPersistence(config: RuntimeConfig): StorePersistence {
   switch (config.backend) {

@@ -2,9 +2,6 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { Pool } from "pg";
-import { Umzug } from "umzug";
-
 import { DomainError } from "../../errors.js";
 
 import { POSTGRES_MIGRATIONS, SQLITE_MIGRATIONS } from "../migration-catalog.js";
@@ -23,6 +20,17 @@ import {
 import { StorageBackend, type RuntimeConfig } from "../types.js";
 
 export type MigrationAction = "up" | "status";
+
+interface NamedMigration<Context> {
+  name: string;
+  up: (params: { context: Context }) => Promise<void> | void;
+}
+
+interface VersionStorage {
+  executed(): Promise<string[]>;
+  logMigration(params: { name: string }): Promise<void>;
+  unlogMigration(params: { name: string }): Promise<void>;
+}
 
 export async function runMigrations(config: RuntimeConfig, action: MigrationAction = "up"): Promise<{ executed: string[]; pending: string[] }> {
   switch (config.backend) {
@@ -51,7 +59,7 @@ export async function assertRuntimeSchemaReady(config: RuntimeConfig): Promise<v
       return;
     }
     case StorageBackend.POSTGRES: {
-      const pool = createDefaultPool(config.connectionString ?? "");
+      const pool = await createDefaultPool(config.connectionString ?? "");
       try {
         await assertPostgresSchemaReady(pool);
       } finally {
@@ -65,20 +73,7 @@ export async function runSqliteMigrations(path: string, action: MigrationAction 
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   try {
-    const names = SQLITE_MIGRATIONS.map((migration) => migration.name);
-    const umzug = new Umzug<SqliteMigrationContext>({
-      context: { db },
-      migrations: SQLITE_MIGRATIONS,
-      storage: new SqliteVersionStorage(db, names),
-      logger: undefined
-    });
-    if (action === "up") {
-      await umzug.up();
-    }
-    return {
-      executed: (await umzug.executed()).map((migration: { name: string }) => migration.name),
-      pending: (await umzug.pending()).map((migration: { name: string }) => migration.name)
-    };
+    return runMigrationPlan({ db }, SQLITE_MIGRATIONS, new SqliteVersionStorage(db, SQLITE_MIGRATIONS.map((migration) => migration.name)), action);
   } finally {
     db.close();
   }
@@ -86,30 +81,22 @@ export async function runSqliteMigrations(path: string, action: MigrationAction 
 
 export async function runPostgresMigrations(
   connectionString: string,
-  createPool: (connectionString: string) => PgPoolLike = createDefaultPool,
+  createPool?: (connectionString: string) => PgPoolLike | Promise<PgPoolLike>,
   action: MigrationAction = "up"
 ): Promise<{ executed: string[]; pending: string[] }> {
   if (!connectionString) {
     throw new DomainError("postgres connection string is required", 500);
   }
-  const pool = createPool(connectionString);
+  const pool = createPool ? await createPool(connectionString) : await createDefaultPool(connectionString);
   try {
-    const names = POSTGRES_MIGRATIONS.map((migration) => migration.name);
     const migrationContext = await createPostgresMigrationContext(pool);
-    const umzug = new Umzug<PostgresMigrationContext>({
-      context: migrationContext.context,
-      migrations: POSTGRES_MIGRATIONS,
-      storage: new PostgresVersionStorage(pool, names),
-      logger: undefined
-    });
     try {
-      if (action === "up") {
-        await umzug.up();
-      }
-      return {
-        executed: (await umzug.executed()).map((migration: { name: string }) => migration.name),
-        pending: (await umzug.pending()).map((migration: { name: string }) => migration.name)
-      };
+      return runMigrationPlan(
+        migrationContext.context,
+        POSTGRES_MIGRATIONS,
+        new PostgresVersionStorage(pool, POSTGRES_MIGRATIONS.map((migration) => migration.name)),
+        action
+      );
     } finally {
       migrationContext.release();
     }
@@ -193,8 +180,37 @@ function wrapMigrationClient(client: PostgresMigrationContext["client"]): Postgr
   });
 }
 
-function createDefaultPool(connectionString: string): PgPoolLike {
+async function createDefaultPool(connectionString: string): Promise<PgPoolLike> {
+  const { Pool } = await import("pg");
   return new Pool({ connectionString });
+}
+
+async function runMigrationPlan<Context>(
+  context: Context,
+  migrations: NamedMigration<Context>[],
+  storage: VersionStorage,
+  action: MigrationAction
+): Promise<{ executed: string[]; pending: string[] }> {
+  const executedNames = new Set(await storage.executed());
+
+  if (action === "up") {
+    for (const migration of migrations) {
+      if (executedNames.has(migration.name)) {
+        continue;
+      }
+
+      await migration.up({ context });
+      await storage.logMigration({ name: migration.name });
+      executedNames.add(migration.name);
+    }
+  }
+
+  const executed = await storage.executed();
+  const executedSet = new Set(executed);
+  return {
+    executed,
+    pending: migrations.filter((migration) => !executedSet.has(migration.name)).map((migration) => migration.name)
+  };
 }
 
 function versionForMigration(name: string, names: string[]): number {
