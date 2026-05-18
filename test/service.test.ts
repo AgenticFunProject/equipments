@@ -83,6 +83,16 @@ function usersServiceAdminAuthHeader(overrides: JwtAuthOverrides = {}) {
   });
 }
 
+function withInvalidSignature(headers: { authorization: string }) {
+  const token = headers.authorization.replace(/^Bearer\s+/i, "");
+  const [encodedHeader, encodedPayload, encodedSignature] = token.split(".");
+  assert.ok(encodedHeader && encodedPayload && encodedSignature, "test token should be a JWT");
+
+  const replacement = encodedSignature.endsWith("a") ? "b" : "a";
+  const tamperedSignature = `${encodedSignature.slice(0, -1)}${replacement}`;
+  return { authorization: `Bearer ${encodedHeader}.${encodedPayload}.${tamperedSignature}` };
+}
+
 function authHeaders(subject: string, issuer = "platform-auth") {
   return {
     ...authHeader([Scope.MODIFY]),
@@ -468,6 +478,43 @@ test("Users Service admin role does not bypass JWT audience validation", async (
   assert.deepEqual(response.json(), { error: "bearer token audience is invalid" });
 });
 
+test("Users Service admin role does not bypass JWT issuer validation", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: usersServiceAdminAuthHeader({ iss: "users-service" })
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json(), { error: "bearer token issuer is invalid" });
+});
+
+test("Users Service admin role does not bypass JWT expiry validation", async () => {
+  const app = createApp();
+  const expiredAt = Math.floor(Date.now() / 1000) - 60;
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: usersServiceAdminAuthHeader({ exp: expiredAt })
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json(), { error: "bearer token is expired" });
+});
+
+test("Users Service admin role does not bypass JWT signature validation", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: withInvalidSignature(usersServiceAdminAuthHeader())
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json(), { error: "invalid bearer token signature" });
+});
+
 test("scoped tokens without admin role still authorize protected routes", async () => {
   const app = createApp();
   const response = await app.inject({
@@ -479,28 +526,19 @@ test("scoped tokens without admin role still authorize protected routes", async 
   assert.equal(response.statusCode, 200);
 });
 
-test("non-admin roles without scopes are rejected", async () => {
+test("role matching for admin is exact", async () => {
   const app = createApp();
-  const response = await app.inject({
-    method: "GET",
-    url: "/equipment-types",
-    headers: authHeader([], { role: "Admin" })
-  });
 
-  assert.equal(response.statusCode, 403);
-  assert.deepEqual(response.json(), { error: `missing required scope ${Scope.READ}` });
-});
+  for (const role of ["Admin", "administrator"]) {
+    const response = await app.inject({
+      method: "GET",
+      url: "/equipment-types",
+      headers: authHeader([], { role })
+    });
 
-test("admin role does not bypass JWT issuer validation", async () => {
-  const app = createApp();
-  const response = await app.inject({
-    method: "GET",
-    url: "/equipment-types",
-    headers: authHeader([], { role: "admin", iss: "users-service" })
-  });
-
-  assert.equal(response.statusCode, 401);
-  assert.deepEqual(response.json(), { error: "bearer token issuer is invalid" });
+    assert.equal(response.statusCode, 403, `${role} must not satisfy the admin role`);
+    assert.deepEqual(response.json(), { error: `missing required scope ${Scope.READ}` });
+  }
 });
 
 test("write routes record successful audit events", async () => {
