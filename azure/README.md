@@ -20,19 +20,19 @@ Files in this directory:
 Create these secrets in Azure Key Vault before deploying:
 
 - `storage-postgres-url`: PostgreSQL connection string for the production database
-- `auth-jwt-secret`: HS256 bearer-token signing secret shared with Users Service
+- `auth-jwt-secret`: production HS256 bearer-token signing secret shared by Users Service and Equipments
 
 The Container App and migration job both use system-assigned managed identity. Grant that identity Key Vault secret read access before running either template.
 
 ## JWT Configuration With Users Service
 
-Production admin bearer tokens come from Users Service `POST /auth/token`. Equipments validates those JWTs locally, so the Container App configuration must match the Users Service runtime configuration:
+Production admin bearer tokens come from Users Service `POST /auth/token`. Equipments validates those JWTs locally, so the Container App configuration must share the same JWT contract as the Users Service runtime configuration:
 
-- `AUTH_JWT_ISSUER` must equal the Users Service token `iss`
-- `AUTH_JWT_AUDIENCE` must equal the Users Service token `aud`
-- `AUTH_JWT_SECRET` must reference the same Key Vault secret value that Users Service uses to sign HS256 tokens
+- Users Service and Equipments must use the same `AUTH_JWT_ISSUER`; it must equal the token `iss`
+- Users Service and Equipments must use the same `AUTH_JWT_AUDIENCE`; it must equal the token `aud`
+- Users Service and Equipments must use the same `AUTH_JWT_SECRET`; in production this must be resolved from the secret manager, such as Azure Key Vault, and never copied into inline Container App configuration
 
-The Azure templates set `AUTH_JWT_SECRET` from `auth-jwt-secret` and include placeholder issuer and audience values. Change those values in both the service app and migration job templates whenever the production Users Service issuer or audience differs from the defaults.
+The Azure templates set `AUTH_JWT_SECRET` from the Key Vault-backed `auth-jwt-secret` secret reference and include placeholder issuer and audience values. Change those values in both the service app and migration job templates whenever the production Users Service issuer or audience differs from the defaults.
 
 Expected production admin tokens are HS256 JWTs with `sub` set to a stable Users Service `users.id`, matching `iss` and `aud`, a future `exp`, a `scope` claim, and `role` set exactly to `admin`. Non-admin tokens still require `equipments:read` for read routes and `equipments:modify` for write routes.
 
@@ -90,7 +90,7 @@ Do not rely on app startup to apply schema changes.
 
 ## Verification Checklist
 
-Run these checks after each rollout:
+Run these checks after each rollout. The JWT checks must use an admin token minted by the production Users Service and call both one Equipments read endpoint and one Equipments write endpoint.
 
 The write-route JWT check below uses a synthetic event type so it validates authorization without changing catalogue or reservation state; it still creates a normal audit event.
 
