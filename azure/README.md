@@ -20,9 +20,21 @@ Files in this directory:
 Create these secrets in Azure Key Vault before deploying:
 
 - `storage-postgres-url`: PostgreSQL connection string for the production database
-- `auth-jwt-secret`: bearer token signing secret used by the service
+- `auth-jwt-secret`: HS256 bearer-token signing secret shared with Users Service
 
 The Container App and migration job both use system-assigned managed identity. Grant that identity Key Vault secret read access before running either template.
+
+## JWT Configuration With Users Service
+
+Production admin bearer tokens come from Users Service `POST /auth/token`. Equipments validates those JWTs locally, so the Container App configuration must match the Users Service runtime configuration:
+
+- `AUTH_JWT_ISSUER` must equal the Users Service token `iss`
+- `AUTH_JWT_AUDIENCE` must equal the Users Service token `aud`
+- `AUTH_JWT_SECRET` must reference the same Key Vault secret value that Users Service uses to sign HS256 tokens
+
+The Azure templates set `AUTH_JWT_SECRET` from `auth-jwt-secret` and include placeholder issuer and audience values. Change those values in both the service app and migration job templates whenever the production Users Service issuer or audience differs from the defaults.
+
+Expected production admin tokens are HS256 JWTs with `sub` set to a stable Users Service `users.id`, matching `iss` and `aud`, a future `exp`, a `scope` claim, and `role` set exactly to `admin`. Non-admin tokens still require `equipments:read` for read routes and `equipments:modify` for write routes.
 
 ## Build And Push
 
@@ -80,6 +92,8 @@ Do not rely on app startup to apply schema changes.
 
 Run these checks after each rollout:
 
+The write-route JWT check below uses a synthetic event type so it validates authorization without changing catalogue or reservation state; it still creates a normal audit event.
+
 ```bash
 az containerapp revision list \
   --resource-group <resource-group> \
@@ -94,6 +108,20 @@ az containerapp show \
 
 curl -fsS https://<fqdn>/health
 
+TOKEN=$(curl -fsS -X POST https://<users-service-fqdn>/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"role":"admin"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8").toString()).token')
+
+curl -fsS https://<fqdn>/equipment-types \
+  -H "Authorization: Bearer $TOKEN"
+
+VALIDATION_CODE="AZVAL$(date +%s)"
+curl -fsS -X POST https://<fqdn>/events \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"eventType\":\"jwt.validation\",\"payload\":{\"bookingReference\":\"$VALIDATION_CODE\"}}"
+
 az containerapp logs show \
   --resource-group <resource-group> \
   --name equipments-service \
@@ -105,6 +133,7 @@ Successful rollout signals:
 - migration job exits successfully
 - at least two replicas become ready
 - `GET /health` returns `200` with the expected version
+- Users Service admin token validates against both a read route and a write route
 - logs do not show schema version or secret resolution failures
 
 ## Rollback Guidance

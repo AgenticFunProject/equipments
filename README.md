@@ -197,7 +197,57 @@ Bearer token configuration is driven by these environment variables:
 - `AUTH_JWT_AUDIENCE` defaults to `equipments-service`
 - `AUTH_JWT_SECRET` defaults to `equipments-dev-secret`
 
-For local development, you can mint a compatible HS256 token with Node:
+### Users Service Admin JWT Integration
+
+Users Service `POST /auth/token` is the source of admin bearer tokens for operators and automation that call Equipments. Equipments does not call Users Service to introspect tokens; it validates the JWT locally, so both services must be configured with the same JWT values:
+
+- `AUTH_JWT_ISSUER` must match the token `iss`
+- `AUTH_JWT_AUDIENCE` must match the token `aud`; array audiences are accepted when one entry matches
+- `AUTH_JWT_SECRET` must be the same HS256 signing secret used by Users Service
+
+Production secrets must come from the deployment secret manager rather than inline environment values. In Azure Container Apps, `AUTH_JWT_SECRET` is expected to reference Key Vault.
+
+The expected Users Service admin token shape is:
+
+```json
+{
+  "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+  },
+  "payload": {
+    "sub": "<stable users.id>",
+    "iss": "<AUTH_JWT_ISSUER>",
+    "aud": "<AUTH_JWT_AUDIENCE>",
+    "exp": 1770000000,
+    "scope": "equipments:read equipments:modify",
+    "role": "admin"
+  }
+}
+```
+
+`sub` must be the stable Users Service `users.id` value because Equipments records authenticated write metadata against the `(iss, sub)` identity. `role` must be exactly `admin` to authorize both read and write routes without relying on Equipments-specific scopes. Non-admin tokens still need `equipments:read` for read routes and `equipments:modify` for write routes.
+
+For local validation, start both services with matching JWT configuration:
+
+```bash
+export AUTH_JWT_ISSUER=platform-auth
+export AUTH_JWT_AUDIENCE=equipments-service
+export AUTH_JWT_SECRET=equipments-dev-secret
+```
+
+When Users Service is running locally, get an admin bearer token from `POST /auth/token` using that service's configured local admin credential or fixture. The response token must have the claim shape above:
+
+```bash
+USERS_SERVICE_URL=http://localhost:3001
+
+TOKEN=$(curl -fsS -X POST "$USERS_SERVICE_URL/auth/token" \
+  -H "Content-Type: application/json" \
+  -d '{"role":"admin"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8").toString()).token')
+```
+
+If Users Service is not running, you can construct a Users Service-shaped admin token with Node as long as the same `AUTH_JWT_*` values are used by Equipments:
 
 ```bash
 TOKEN=$(node --input-type=module <<'EOF'
@@ -207,11 +257,12 @@ const secret = process.env.AUTH_JWT_SECRET || "equipments-dev-secret";
 const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
 const payload = Buffer.from(
   JSON.stringify({
-    sub: "local-dev",
+    sub: process.env.USERS_ADMIN_ID || "local-users-admin-id",
     iss: process.env.AUTH_JWT_ISSUER || "platform-auth",
     aud: process.env.AUTH_JWT_AUDIENCE || "equipments-service",
     exp: Math.floor(Date.now() / 1000) + 3600,
-    scope: "equipments:read equipments:modify"
+    scope: "equipments:read equipments:modify",
+    role: "admin"
   })
 ).toString("base64url");
 const signature = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
@@ -220,7 +271,20 @@ EOF
 )
 ```
 
-Then call protected routes with `-H "Authorization: Bearer $TOKEN"`.
+Then call at least one read endpoint and one write endpoint with the same bearer token:
+
+```bash
+EQUIPMENTS_URL=http://localhost:3000
+
+curl -fsS "$EQUIPMENTS_URL/equipment-types" \
+  -H "Authorization: Bearer $TOKEN"
+
+VALIDATION_CODE="VAL$(date +%s)"
+curl -fsS -X POST "$EQUIPMENTS_URL/equipment-types" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"code\":\"$VALIDATION_CODE\",\"description\":\"Local validation dry container\",\"nominalLength\":\"local\",\"maxPayloadKg\":1}"
+```
 
 The browser playground stays publicly reachable so you can paste a bearer token into the UI before sending protected requests. It also calls out that `GET /health` is public while read routes need `equipments:read` and write routes need `equipments:modify`.
 
