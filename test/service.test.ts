@@ -180,6 +180,97 @@ test("admin role authorizes write routes without equipment scopes", async () => 
   assert.equal((response.json() as { containerNumber: string }).containerNumber, "ADMU1111111");
 });
 
+test("Users Service admin JWT authorizes equipment and container write routes", async () => {
+  const { app, store } = createStoreAndApp();
+  const headers = usersServiceAdminAuthHeader();
+  const lifecycleReservation = store.createReservation({
+    bookingReference: "BKG-USERS-EQUIPMENT-WRITES",
+    originDepot: "CNSHA-01",
+    equipment: [{ type: "20FT", quantity: 1 }]
+  });
+  const lifecycleContainerId = lifecycleReservation.assignedContainers[0].containerId;
+
+  const createdType = await app.inject({
+    method: "POST",
+    url: "/equipment-types",
+    headers,
+    payload: {
+      code: "53FT",
+      description: "53-foot dry container",
+      nominalLength: "53'",
+      maxPayloadKg: 30000
+    }
+  });
+  assert.equal(createdType.statusCode, 201, createdType.body);
+  assert.equal((createdType.json() as { code: string }).code, "53FT");
+
+  const updatedType = await app.inject({
+    method: "PUT",
+    url: "/equipment-types/53ft",
+    headers,
+    payload: {
+      description: "53-foot dry container updated",
+      maxPayloadKg: 30100
+    }
+  });
+  assert.equal(updatedType.statusCode, 200, updatedType.body);
+  const updatedTypeBody = updatedType.json() as { code: string; description: string; maxPayloadKg: number };
+  assert.deepEqual(
+    {
+      code: updatedTypeBody.code,
+      description: updatedTypeBody.description,
+      maxPayloadKg: updatedTypeBody.maxPayloadKg
+    },
+    {
+      code: "53FT",
+      description: "53-foot dry container updated",
+      maxPayloadKg: 30100
+    }
+  );
+
+  const createdContainer = await app.inject({
+    method: "POST",
+    url: "/containers",
+    headers,
+    payload: {
+      containerNumber: "ADMU2222222",
+      equipmentType: "53FT",
+      currentDepot: "NLRTM-01"
+    }
+  });
+  assert.equal(createdContainer.statusCode, 201, createdContainer.body);
+  const createdContainerBody = createdContainer.json() as { id: string; containerNumber: string; status: string };
+  assert.equal(createdContainerBody.containerNumber, "ADMU2222222");
+  assert.equal(createdContainerBody.status, "AVAILABLE");
+
+  const overriddenContainer = await app.inject({
+    method: "PATCH",
+    url: `/containers/${createdContainerBody.id}/status`,
+    headers,
+    payload: {
+      status: "IN_TRANSIT"
+    }
+  });
+  assert.equal(overriddenContainer.statusCode, 200, overriddenContainer.body);
+  assert.equal((overriddenContainer.json() as { status: string }).status, "IN_TRANSIT");
+
+  const pickedUpContainer = await app.inject({
+    method: "POST",
+    url: `/containers/${lifecycleContainerId}/pickup`,
+    headers
+  });
+  assert.equal(pickedUpContainer.statusCode, 200, pickedUpContainer.body);
+  assert.equal((pickedUpContainer.json() as { status: string }).status, "DISPATCHED");
+
+  const returnedContainer = await app.inject({
+    method: "POST",
+    url: `/containers/${lifecycleContainerId}/return`,
+    headers
+  });
+  assert.equal(returnedContainer.statusCode, 200, returnedContainer.body);
+  assert.equal((returnedContainer.json() as { status: string }).status, "AVAILABLE");
+});
+
 test("Users Service admin JWT authorizes every protected REST endpoint", async () => {
   const { app, store } = createStoreAndApp();
   const headers = usersServiceAdminAuthHeader();
