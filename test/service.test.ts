@@ -23,15 +23,28 @@ function createStoreAndApp(seed = true) {
   };
 }
 
-function authHeader(scopes: string[] = [Scope.READ, Scope.MODIFY], overrides: Partial<{ sub: string; iss: string; aud: string | string[]; exp: number; scope: string }> = {}) {
+function authHeader(
+  scopes: string[] = [Scope.READ, Scope.MODIFY],
+  overrides: Partial<{ sub: string; iss: string; aud: string | string[]; exp: number; scope: string; role: string }> = {}
+) {
   const now = Math.floor(Date.now() / 1000);
-  const payload = {
+  const payload: {
+    sub: string;
+    iss: string;
+    aud: string | string[];
+    exp: number;
+    scope: string;
+    role?: string;
+  } = {
     sub: overrides.sub ?? "test-client",
     iss: overrides.iss ?? authConfig.issuer,
     aud: overrides.aud ?? authConfig.audience,
     exp: overrides.exp ?? now + 3600,
     scope: overrides.scope ?? scopes.join(" ")
   };
+  if (overrides.role !== undefined) {
+    payload.role = overrides.role;
+  }
   const header = { alg: "HS256", typ: "JWT" };
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -108,6 +121,70 @@ test("write routes reject read-only tokens", async () => {
 
   assert.equal(response.statusCode, 403);
   assert.deepEqual(response.json(), { error: `missing required scope ${Scope.MODIFY}` });
+});
+
+test("admin role authorizes read routes without equipment scopes", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: authHeader([], { role: "admin" })
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.ok((response.json() as { equipmentTypes: unknown[] }).equipmentTypes.length > 0);
+});
+
+test("admin role authorizes write routes without equipment scopes", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/containers",
+    headers: authHeader([], { role: "admin" }),
+    payload: {
+      containerNumber: "ADMU1111111",
+      equipmentType: "20FT",
+      currentDepot: "CNSHA-01"
+    }
+  });
+
+  assert.equal(response.statusCode, 201);
+  assert.equal((response.json() as { containerNumber: string }).containerNumber, "ADMU1111111");
+});
+
+test("scoped tokens without admin role still authorize protected routes", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: authHeader([Scope.READ])
+  });
+
+  assert.equal(response.statusCode, 200);
+});
+
+test("non-admin roles without scopes are rejected", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: authHeader([], { role: "Admin" })
+  });
+
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(response.json(), { error: `missing required scope ${Scope.READ}` });
+});
+
+test("admin role does not bypass JWT issuer validation", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: authHeader([], { role: "admin", iss: "users-service" })
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json(), { error: "bearer token issuer is invalid" });
 });
 
 test("write routes record successful audit events", async () => {

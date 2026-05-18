@@ -24,6 +24,7 @@ export interface AuthenticatedCaller {
   issuer: string;
   audience: string | string[];
   scopes: string[];
+  role?: string;
   expiresAt: number;
 }
 
@@ -38,6 +39,7 @@ interface JwtPayload {
   aud?: string | string[];
   exp?: number;
   scope?: string;
+  role?: unknown;
 }
 
 interface JwtHeaderOutput {
@@ -108,14 +110,17 @@ export function authenticateBearerToken(header: string | undefined, config: Bear
     issuer: payload.iss,
     audience,
     scopes,
+    role: parseRole(payload.role),
     expiresAt: payload.exp
   };
 }
 
 export function ensureScope(caller: AuthenticatedCaller, requiredScope: Scope): void {
-  if (!caller.scopes.includes(requiredScope)) {
-    throw new DomainError(`missing required scope ${requiredScope}`, 403);
+  if (caller.role === "admin" || caller.scopes.includes(requiredScope)) {
+    return;
   }
+
+  throw new DomainError(`missing required scope ${requiredScope}`, 403);
 }
 
 export function createBearerToken(
@@ -168,6 +173,10 @@ function parseScopes(raw: string | undefined): string[] {
     .split(/\s+/)
     .map((scope) => scope.trim())
     .filter(Boolean);
+}
+
+function parseRole(raw: unknown): string | undefined {
+  return typeof raw === "string" ? raw : undefined;
 }
 
 function audienceMatches(audience: string | string[] | undefined, expectedAudience: string): boolean {
