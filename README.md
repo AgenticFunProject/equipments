@@ -197,15 +197,13 @@ Bearer token configuration is driven by these environment variables:
 - `AUTH_JWT_AUDIENCE` defaults to `equipments-service`
 - `AUTH_JWT_SECRET` defaults to `equipments-dev-secret`
 
-### Users Service Admin JWT Integration
+### Local Users Service Admin JWT Flow
 
-Users Service `POST /auth/token` is the source of admin bearer tokens for operators and automation that call Equipments. Equipments does not call Users Service to introspect tokens; it validates the JWT locally, so both services must be configured with the same JWT values:
+For local development, Users Service `POST /auth/token` is the source of admin bearer tokens for callers that exercise Equipments protected endpoints. Equipments does not call Users Service to introspect tokens; it validates the JWT locally, so both services must be configured with the same JWT values:
 
 - `AUTH_JWT_ISSUER` must match the token `iss`
 - `AUTH_JWT_AUDIENCE` must match the token `aud`; array audiences are accepted when one entry matches
 - `AUTH_JWT_SECRET` must be the same HS256 signing secret used by Users Service
-
-Production secrets must come from the deployment secret manager rather than inline environment values. In Azure Container Apps, `AUTH_JWT_SECRET` is expected to reference Key Vault.
 
 The expected Users Service admin token shape is:
 
@@ -236,7 +234,7 @@ export AUTH_JWT_AUDIENCE=equipments-service
 export AUTH_JWT_SECRET=equipments-dev-secret
 ```
 
-When Users Service is running locally, get an admin bearer token from `POST /auth/token` using that service's configured local admin credential or fixture. The response token must have the claim shape above:
+When Users Service is running locally, get an admin bearer token from `POST /auth/token` using that service's configured local admin credential or fixture. The JSON body below represents that local fixture payload; the response token must have the claim shape above:
 
 ```bash
 USERS_SERVICE_URL=http://localhost:3001
@@ -271,7 +269,7 @@ EOF
 )
 ```
 
-Then call at least one read endpoint and one write endpoint with the same bearer token:
+Then call at least one local read endpoint and one write endpoint with the same bearer token:
 
 ```bash
 EQUIPMENTS_URL=http://localhost:3000
