@@ -1,6 +1,6 @@
 import { DomainError } from "../errors.js";
 import type { EquipmentType } from "../types.js";
-import type { ActorIdentity, StoreState } from "./shared.js";
+import { nextTimestampAfter, type ActorIdentity, type StoreState } from "./shared.js";
 
 export function listEquipmentTypes(state: StoreState): EquipmentType[] {
   return Array.from(state.equipmentTypes.values());
@@ -53,7 +53,7 @@ export function updateEquipmentType(
     throw new DomainError(`equipment type ${key} not found`, 404);
   }
 
-  const now = new Date().toISOString();
+  const now = nextTimestampAfter(current.updatedAt);
   const next: EquipmentType = {
     code: current.code,
     description: input.description?.trim() ?? current.description,

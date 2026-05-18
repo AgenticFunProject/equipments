@@ -54,3 +54,12 @@ export function normalizeContainerStatus(status: string): ContainerStatus {
   }
   return normalized as ContainerStatus;
 }
+
+export function nextTimestampAfter(previousTimestamp: string): string {
+  const previous = Date.parse(previousTimestamp);
+  const now = Date.now();
+  if (Number.isFinite(previous) && now <= previous) {
+    return new Date(previous + 1).toISOString();
+  }
+  return new Date(now).toISOString();
+}

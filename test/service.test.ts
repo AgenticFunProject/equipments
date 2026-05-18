@@ -9,6 +9,18 @@ import { EquipmentsStore } from "../src/store.js";
 import { SERVICE_VERSION } from "../src/version.js";
 
 const authConfig = loadBearerAuthConfig({});
+const usersServiceUserId = "usr_01HV7M6J7Q3K5M8Y2V9N4A1B2C";
+const usersServiceAdminScope = `${Scope.READ} ${Scope.MODIFY}`;
+
+type JwtAuthOverrides = Partial<{
+  sub: string;
+  iss: string;
+  aud: string | string[];
+  exp: number;
+  iat: number;
+  scope: string;
+  role: string;
+}>;
 
 function createApp() {
   const store = new EquipmentsStore(true);
@@ -25,7 +37,7 @@ function createStoreAndApp(seed = true) {
 
 function authHeader(
   scopes: string[] = [Scope.READ, Scope.MODIFY],
-  overrides: Partial<{ sub: string; iss: string; aud: string | string[]; exp: number; scope: string; role: string }> = {}
+  overrides: JwtAuthOverrides = {}
 ) {
   const now = Math.floor(Date.now() / 1000);
   const payload: {
@@ -33,6 +45,7 @@ function authHeader(
     iss: string;
     aud: string | string[];
     exp: number;
+    iat?: number;
     scope: string;
     role?: string;
   } = {
@@ -42,6 +55,9 @@ function authHeader(
     exp: overrides.exp ?? now + 3600,
     scope: overrides.scope ?? scopes.join(" ")
   };
+  if (overrides.iat !== undefined) {
+    payload.iat = overrides.iat;
+  }
   if (overrides.role !== undefined) {
     payload.role = overrides.role;
   }
@@ -53,6 +69,18 @@ function authHeader(
     .digest("base64url");
 
   return { authorization: `Bearer ${encodedHeader}.${encodedPayload}.${signature}` };
+}
+
+function usersServiceAdminAuthHeader(overrides: JwtAuthOverrides = {}) {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  return authHeader([], {
+    sub: usersServiceUserId,
+    iat: issuedAt,
+    exp: issuedAt + 3600,
+    scope: usersServiceAdminScope,
+    role: "admin",
+    ...overrides
+  });
 }
 
 function authHeaders(subject: string, issuer = "platform-auth") {
@@ -150,6 +178,203 @@ test("admin role authorizes write routes without equipment scopes", async () => 
 
   assert.equal(response.statusCode, 201);
   assert.equal((response.json() as { containerNumber: string }).containerNumber, "ADMU1111111");
+});
+
+test("Users Service admin JWT authorizes every protected REST endpoint", async () => {
+  const { app, store } = createStoreAndApp();
+  const headers = usersServiceAdminAuthHeader();
+  let registeredContainerId = "";
+
+  store.createReservation({
+    bookingReference: "BKG-USERS-DELETE",
+    originDepot: "CNSHA-01",
+    equipment: [{ type: "40FT", quantity: 1 }]
+  });
+  const lifecycleReservation = store.createReservation({
+    bookingReference: "BKG-USERS-LIFECYCLE",
+    originDepot: "CNSHA-01",
+    equipment: [{ type: "20FT", quantity: 1 }]
+  });
+  const eventReservation = store.createReservation({
+    bookingReference: "BKG-USERS-EVENT",
+    originDepot: "CNSHA-01",
+    equipment: [{ type: "20FT", quantity: 1 }]
+  });
+  const lifecycleContainerId = lifecycleReservation.assignedContainers[0].containerId;
+
+  const protectedRouteChecks = [
+    {
+      name: "GET /equipment-types",
+      expectedStatus: 200,
+      inject: () => app.inject({ method: "GET", url: "/equipment-types", headers })
+    },
+    {
+      name: "POST /equipment-types",
+      expectedStatus: 201,
+      inject: () => app.inject({
+        method: "POST",
+        url: "/equipment-types",
+        headers,
+        payload: {
+          code: "45HC",
+          description: "45-foot High Cube",
+          nominalLength: "45'",
+          maxPayloadKg: 29500
+        }
+      })
+    },
+    {
+      name: "PUT /equipment-types/{code}",
+      expectedStatus: 200,
+      inject: () => app.inject({
+        method: "PUT",
+        url: "/equipment-types/45hc",
+        headers,
+        payload: {
+          description: "45-foot High Cube Updated",
+          maxPayloadKg: 29600
+        }
+      })
+    },
+    {
+      name: "POST /containers",
+      expectedStatus: 201,
+      inject: async () => {
+        const response = await app.inject({
+          method: "POST",
+          url: "/containers",
+          headers,
+          payload: {
+            containerNumber: "USRU1111111",
+            equipmentType: "20FT",
+            currentDepot: "CNSHA-01"
+          }
+        });
+        if (response.statusCode === 201) {
+          registeredContainerId = (response.json() as { id: string }).id;
+        }
+        return response;
+      }
+    },
+    {
+      name: "GET /containers",
+      expectedStatus: 200,
+      inject: () => app.inject({ method: "GET", url: "/containers?type=20FT", headers })
+    },
+    {
+      name: "GET /containers/{id}",
+      expectedStatus: 200,
+      inject: () => {
+        assert.ok(registeredContainerId, "POST /containers must create a container before GET /containers/{id}");
+        return app.inject({ method: "GET", url: `/containers/${registeredContainerId}`, headers });
+      }
+    },
+    {
+      name: "PATCH /containers/{id}/status",
+      expectedStatus: 200,
+      inject: () => {
+        assert.ok(registeredContainerId, "POST /containers must create a container before PATCH /containers/{id}/status");
+        return app.inject({
+          method: "PATCH",
+          url: `/containers/${registeredContainerId}/status`,
+          headers,
+          payload: {
+            status: "IN_TRANSIT"
+          }
+        });
+      }
+    },
+    {
+      name: "GET /availability",
+      expectedStatus: 200,
+      inject: () => app.inject({ method: "GET", url: "/availability?depotCode=CNSHA-01", headers })
+    },
+    {
+      name: "POST /reservations",
+      expectedStatus: 201,
+      inject: () => app.inject({
+        method: "POST",
+        url: "/reservations",
+        headers,
+        payload: {
+          bookingReference: "BKG-USERS-REST",
+          originDepot: "CNSHA-01",
+          equipment: [{ type: "40HC", quantity: 1 }]
+        }
+      })
+    },
+    {
+      name: "DELETE /reservations/{bookingReference}",
+      expectedStatus: 200,
+      inject: () => app.inject({ method: "DELETE", url: "/reservations/BKG-USERS-DELETE", headers })
+    },
+    {
+      name: "POST /containers/{id}/pickup",
+      expectedStatus: 200,
+      inject: () => app.inject({ method: "POST", url: `/containers/${lifecycleContainerId}/pickup`, headers })
+    },
+    {
+      name: "POST /containers/{id}/return",
+      expectedStatus: 200,
+      inject: () => app.inject({ method: "POST", url: `/containers/${lifecycleContainerId}/return`, headers })
+    },
+    {
+      name: "POST /events",
+      expectedStatus: 200,
+      inject: () => app.inject({
+        method: "POST",
+        url: "/events",
+        headers,
+        payload: {
+          eventType: "booking.cancelled",
+          payload: {
+            bookingReference: eventReservation.reservation.bookingReference
+          }
+        }
+      })
+    },
+    {
+      name: "POST /dev/reset-all-data",
+      expectedStatus: 200,
+      inject: () => app.inject({ method: "POST", url: "/dev/reset-all-data", headers })
+    },
+    {
+      name: "POST /dev/clear-all-data",
+      expectedStatus: 200,
+      inject: () => app.inject({ method: "POST", url: "/dev/clear-all-data", headers })
+    }
+  ];
+
+  for (const route of protectedRouteChecks) {
+    const response = await route.inject();
+    assert.notEqual(response.statusCode, 401, `${route.name} rejected a valid Users Service admin JWT: ${response.body}`);
+    assert.notEqual(response.statusCode, 403, `${route.name} rejected a valid Users Service admin JWT: ${response.body}`);
+    assert.equal(response.statusCode, route.expectedStatus, `${route.name} returned unexpected response: ${response.body}`);
+  }
+});
+
+test("Users Service token without admin role or required scope is rejected", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: usersServiceAdminAuthHeader({ scope: "", role: undefined })
+  });
+
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(response.json(), { error: `missing required scope ${Scope.READ}` });
+});
+
+test("Users Service admin role does not bypass JWT audience validation", async () => {
+  const app = createApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/equipment-types",
+    headers: usersServiceAdminAuthHeader({ aud: "wrong-audience" })
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json(), { error: "bearer token audience is invalid" });
 });
 
 test("scoped tokens without admin role still authorize protected routes", async () => {
