@@ -626,8 +626,11 @@ test("GET /playground serves the HTML playground", async () => {
   assert.match(response.body, /Bearer token/);
   assert.match(response.body, /Generate Token/);
   assert.match(response.body, /Token subject/);
+  assert.match(response.body, /Token rights/);
   assert.match(response.body, /equipments:read/);
   assert.match(response.body, /equipments:modify/);
+  assert.match(response.body, /role=admin/);
+  assert.match(response.body, /Protected routes without equipment scopes/);
   assert.match(response.body, /GET \/health/);
   assert.match(response.body, /\/openapi\.json/);
   assert.match(response.body, /memory/);
@@ -684,6 +687,8 @@ test("GET /playground/playground.js serves the client script", async () => {
   assert.match(response.body, /const generateTokenButton =/);
   assert.match(response.body, /\/dev\/generate-token/);
   assert.match(response.body, /function generateToken\(/);
+  assert.match(response.body, /function roleFromSelection\(/);
+  assert.match(response.body, /case "admin"/);
   assert.match(response.body, /function isPublicPath\(/);
   assert.match(response.body, /function resetResponseOutput\(/);
   assert.match(response.body, /function runDevDataAction\(/);
@@ -785,6 +790,45 @@ test("POST /dev/generate-token returns a usable bearer token in development mode
     headers: { authorization: `Bearer ${generatedBody.token}` }
   });
   assert.equal(authorized.statusCode, 200);
+});
+
+test("POST /dev/generate-token can create an admin role bearer token in development mode", async () => {
+  const app = createApp();
+
+  const generate = await app.inject({
+    method: "POST",
+    url: "/dev/generate-token",
+    payload: {
+      subject: "playground-admin",
+      scopes: [],
+      role: "admin",
+      expiresInMinutes: 60
+    }
+  });
+
+  assert.equal(generate.statusCode, 201);
+  const generatedBody = generate.json() as {
+    token: string;
+    subject: string;
+    scopes: string[];
+    role: string;
+  };
+  assert.equal(generatedBody.subject, "playground-admin");
+  assert.deepEqual(generatedBody.scopes, []);
+  assert.equal(generatedBody.role, "admin");
+
+  const authorized = await app.inject({
+    method: "POST",
+    url: "/equipment-types",
+    headers: { authorization: `Bearer ${generatedBody.token}` },
+    payload: {
+      code: "53FT",
+      description: "53-foot Dry",
+      nominalLength: "53'",
+      maxPayloadKg: 30000
+    }
+  });
+  assert.equal(authorized.statusCode, 201);
 });
 
 test("POST /dev/generate-token validates required fields", async () => {

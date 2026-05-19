@@ -289,15 +289,19 @@ export function buildServer(
       return;
     }
 
-    const body = request.body as { subject?: string; scopes?: string[]; expiresInMinutes?: number };
+    const body = request.body as { subject?: string; scopes?: string[]; expiresInMinutes?: number; role?: string };
     const subject = body.subject?.trim() ?? "";
     if (!subject) {
       throw new DomainError("token subject is required");
     }
 
     const scopes = Array.isArray(body.scopes) ? body.scopes.map((scope) => scope.trim()).filter(Boolean) : [];
-    if (!scopes.length) {
-      throw new DomainError("at least one token scope is required");
+    const role = body.role?.trim() ?? "";
+    if (role && role !== "admin") {
+      throw new DomainError("unsupported token role");
+    }
+    if (!scopes.length && role !== "admin") {
+      throw new DomainError("at least one token scope or admin role is required");
     }
 
     const expiresInMinutes = Number(body.expiresInMinutes);
@@ -308,7 +312,8 @@ export function buildServer(
     const token = createBearerToken(authConfig, {
       subject,
       scopes,
-      expiresInSeconds: Math.floor(expiresInMinutes * 60)
+      expiresInSeconds: Math.floor(expiresInMinutes * 60),
+      role: role || undefined
     });
 
     reply.status(201);
@@ -318,6 +323,7 @@ export function buildServer(
       audience: authConfig.audience,
       subject,
       scopes,
+      role: role || undefined,
       expiresInMinutes
     };
   });

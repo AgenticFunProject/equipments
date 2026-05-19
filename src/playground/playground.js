@@ -1,53 +1,53 @@
 const presets = {
   health: { method: "GET", path: "/health", body: "", auth: "public", authHint: "This preset is public. A bearer token is optional." },
-  listTypes: { method: "GET", path: "/equipment-types", body: "", auth: "equipments:read", authHint: "This preset needs the equipments:read scope." },
+  listTypes: { method: "GET", path: "/equipment-types", body: "", auth: "equipments:read", authHint: "This preset needs equipments:read or a local admin role." },
   createType: {
     method: "POST",
     path: "/equipment-types",
     body: JSON.stringify({ code: "45HC", description: "45-foot High Cube", nominalLength: "45'", maxPayloadKg: 29500 }, null, 2),
     auth: "equipments:modify",
-    authHint: "This preset needs the equipments:modify scope."
+    authHint: "This preset needs equipments:modify or a local admin role."
   },
   updateType: {
     method: "PUT",
     path: "/equipment-types/45HC",
     body: JSON.stringify({ description: "45-foot High Cube Updated", nominalLength: "45'", maxPayloadKg: 29750 }, null, 2),
     auth: "equipments:modify",
-    authHint: "This preset needs the equipments:modify scope."
+    authHint: "This preset needs equipments:modify or a local admin role."
   },
   registerContainer: {
     method: "POST",
     path: "/containers",
     body: JSON.stringify({ containerNumber: "MSKU1234567", equipmentType: "20FT", currentDepot: "NLRTM-01" }, null, 2),
     auth: "equipments:modify",
-    authHint: "This preset needs the equipments:modify scope."
+    authHint: "This preset needs equipments:modify or a local admin role."
   },
-  listContainers: { method: "GET", path: "/containers?status=AVAILABLE", body: "", auth: "equipments:read", authHint: "This preset needs the equipments:read scope." },
-  getContainer: { method: "GET", path: "/containers/{id}", body: "", auth: "equipments:read", authHint: "This preset needs the equipments:read scope." },
+  listContainers: { method: "GET", path: "/containers?status=AVAILABLE", body: "", auth: "equipments:read", authHint: "This preset needs equipments:read or a local admin role." },
+  getContainer: { method: "GET", path: "/containers/{id}", body: "", auth: "equipments:read", authHint: "This preset needs equipments:read or a local admin role." },
   overrideStatus: {
     method: "PATCH",
     path: "/containers/{id}/status",
     body: JSON.stringify({ status: "DISPATCHED" }, null, 2),
     auth: "equipments:modify",
-    authHint: "This preset needs the equipments:modify scope."
+    authHint: "This preset needs equipments:modify or a local admin role."
   },
-  pickup: { method: "POST", path: "/containers/{id}/pickup", body: "", auth: "equipments:modify", authHint: "This preset needs the equipments:modify scope." },
-  return: { method: "POST", path: "/containers/{id}/return", body: "", auth: "equipments:modify", authHint: "This preset needs the equipments:modify scope." },
-  availability: { method: "GET", path: "/availability?depotCode=CNSHA-01", body: "", auth: "equipments:read", authHint: "This preset needs the equipments:read scope." },
+  pickup: { method: "POST", path: "/containers/{id}/pickup", body: "", auth: "equipments:modify", authHint: "This preset needs equipments:modify or a local admin role." },
+  return: { method: "POST", path: "/containers/{id}/return", body: "", auth: "equipments:modify", authHint: "This preset needs equipments:modify or a local admin role." },
+  availability: { method: "GET", path: "/availability?depotCode=CNSHA-01", body: "", auth: "equipments:read", authHint: "This preset needs equipments:read or a local admin role." },
   reserve: {
     method: "POST",
     path: "/reservations",
     body: JSON.stringify({ bookingReference: "BKG-2026-00042", originDepot: "CNSHA-01", equipment: [{ type: "20FT", quantity: 2 }] }, null, 2),
     auth: "equipments:modify",
-    authHint: "This preset needs the equipments:modify scope."
+    authHint: "This preset needs equipments:modify or a local admin role."
   },
-  release: { method: "DELETE", path: "/reservations/BKG-2026-00042", body: "", auth: "equipments:modify", authHint: "This preset needs the equipments:modify scope." },
+  release: { method: "DELETE", path: "/reservations/BKG-2026-00042", body: "", auth: "equipments:modify", authHint: "This preset needs equipments:modify or a local admin role." },
   event: {
     method: "POST",
     path: "/events",
     body: JSON.stringify({ eventType: "booking.cancelled", payload: { bookingReference: "BKG-2026-00042" } }, null, 2),
     auth: "equipments:modify",
-    authHint: "This preset needs the equipments:modify scope."
+    authHint: "This preset needs equipments:modify or a local admin role."
   }
 };
 
@@ -200,9 +200,15 @@ function scopesFromSelection(value) {
       return ["equipments:read"];
     case "modify":
       return ["equipments:modify"];
+    case "admin":
+      return [];
     default:
       return ["equipments:read", "equipments:modify"];
   }
+}
+
+function roleFromSelection(value) {
+  return value === "admin" ? "admin" : undefined;
 }
 
 async function generateToken() {
@@ -235,6 +241,7 @@ async function generateToken() {
       body: JSON.stringify({
         subject,
         scopes: scopesFromSelection(tokenScopesInput.value),
+        role: roleFromSelection(tokenScopesInput.value),
         expiresInMinutes
       })
     });

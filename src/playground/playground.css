@@ -257,7 +257,7 @@ textarea {
 
 .scope-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -273,6 +273,11 @@ textarea {
 .scope-card-public {
   border-color: rgba(74, 222, 128, 0.22);
   background: rgba(20, 83, 45, 0.26);
+}
+
+.scope-card-admin {
+  border-color: rgba(251, 191, 36, 0.3);
+  background: rgba(113, 63, 18, 0.26);
 }
 
 .scope-label {

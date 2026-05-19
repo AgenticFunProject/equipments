@@ -92,11 +92,12 @@
                 <input id="tokenSubject" type="text" autocomplete="off" spellcheck="false" value="playground-user" />
               </label>
               <label>
-                Token scopes
+                Token rights
                 <select id="tokenScopes">
                   <option value="read">equipments:read</option>
                   <option value="modify">equipments:modify</option>
                   <option value="both" selected>equipments:read + equipments:modify</option>
+                  <option value="admin">role=admin</option>
                 </select>
               </label>
               <label>
@@ -125,6 +126,11 @@
                 <span class="scope-label">equipments:modify</span>
                 <strong>State-changing API calls</strong>
                 <span><code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code></span>
+              </div>
+              <div class="scope-card scope-card-admin">
+                <span class="scope-label">role=admin</span>
+                <strong>Admin role</strong>
+                <span>Protected routes without equipment scopes</span>
               </div>
             </div>
           </div>

@@ -125,7 +125,7 @@ export function ensureScope(caller: AuthenticatedCaller, requiredScope: Scope): 
 
 export function createBearerToken(
   config: BearerAuthConfig,
-  input: { subject: string; scopes: string[]; expiresInSeconds: number }
+  input: { subject: string; scopes: string[]; expiresInSeconds: number; role?: string }
 ): string {
   const subject = input.subject.trim();
   if (!subject) {
@@ -145,6 +145,10 @@ export function createBearerToken(
     exp: Math.floor(Date.now() / 1000) + expiresInSeconds,
     scope: input.scopes.join(" ")
   };
+  const role = input.role?.trim();
+  if (role) {
+    payload.role = role;
+  }
 
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
