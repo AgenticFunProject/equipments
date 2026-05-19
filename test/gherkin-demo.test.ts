@@ -10,7 +10,7 @@ import type { FastifyInstance } from "fastify";
 import { loadBearerAuthConfig, Scope } from "../src/auth.js";
 import { StorageBackend } from "../src/persistence/index.js";
 import { buildServer } from "../src/server.js";
-import { createStoreFromRuntimeConfig } from "../src/store.js";
+import { createStoreFromRuntimeConfig, EquipmentsStore } from "../src/store.js";
 
 const authConfig = loadBearerAuthConfig({});
 
@@ -18,9 +18,12 @@ interface DemoState {
   app: FastifyInstance | null;
   tempDir: string | null;
   latestStatusCode: number | null;
+  latestHeaders: Record<string, string | number | string[] | undefined>;
   latestBody: unknown;
+  latestBodyText: string;
   latestReservedContainerId: string | null;
   latestContainerId: string | null;
+  latestGeneratedToken: string | null;
 }
 
 interface FeatureDocument {
@@ -74,9 +77,12 @@ function createDemoState(): DemoState {
     app: null,
     tempDir: null,
     latestStatusCode: null,
+    latestHeaders: {},
     latestBody: null,
+    latestBodyText: "",
     latestReservedContainerId: null,
-    latestContainerId: null
+    latestContainerId: null,
+    latestGeneratedToken: null
   };
 }
 
@@ -188,21 +194,42 @@ async function runStep(
 }
 
 async function request(state: DemoState, method: string, url: string, payload?: unknown): Promise<void> {
+  return requestWithHeaders(state, method, url, authHeaderForMethod(method), payload);
+}
+
+async function requestWithHeaders(
+  state: DemoState,
+  method: string,
+  url: string,
+  headers?: Record<string, string>,
+  payload?: unknown
+): Promise<void> {
   assert.ok(state.app, "expected demo app to be initialized");
-  const response = await state.app.inject({ method, url, payload, headers: authHeaderForMethod(method) } as any);
+  const response = await state.app.inject({ method, url, payload, headers } as any);
   state.latestStatusCode = response.statusCode;
-  state.latestBody = response.json();
+  state.latestHeaders = response.headers;
+  state.latestBodyText = response.body;
+  if (String(response.headers["content-type"] ?? "").startsWith("application/json") && response.body) {
+    state.latestBody = response.json();
+  } else {
+    state.latestBody = null;
+  }
 }
 
 function authHeaderForMethod(method: string) {
   const scopes = ["GET", "HEAD"].includes(method.toUpperCase()) ? [Scope.READ] : [Scope.MODIFY];
+  return authHeader(scopes);
+}
+
+function authHeader(scopes: string[], overrides: { role?: string } = {}) {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     sub: "demo-client",
     iss: authConfig.issuer,
     aud: authConfig.audience,
     exp: now + 3600,
-    scope: scopes.join(" ")
+    scope: scopes.join(" "),
+    ...(overrides.role ? { role: overrides.role } : {})
   };
   const header = { alg: "HS256", typ: "JWT" };
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
@@ -212,6 +239,10 @@ function authHeaderForMethod(method: string) {
     .digest("base64url");
 
   return { authorization: `Bearer ${encodedHeader}.${encodedPayload}.${signature}` };
+}
+
+function adminBearerWithoutEquipmentScopes() {
+  return authHeader([], { role: "admin" });
 }
 
 function latestBody<T>(state: DemoState): T {
@@ -229,6 +260,127 @@ const stepDefinitions: StepDefinition[] = [
         true
       );
       state.app = buildServer(store, { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true }, undefined, authConfig);
+    }
+  },
+  {
+    pattern: /^the seeded equipments service is running$/,
+    run: async (state) => {
+      state.app = buildServer(new EquipmentsStore(true), undefined, undefined, authConfig);
+    }
+  },
+  {
+    pattern: /^the seeded equipments service is running outside development mode$/,
+    run: async (state) => {
+      state.app = buildServer(new EquipmentsStore(true), undefined, false, authConfig);
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" without a bearer token$/,
+    run: async (state, method, url) => {
+      await requestWithHeaders(state, method, url);
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with a read bearer token$/,
+    run: async (state, method, url) => {
+      await requestWithHeaders(state, method, url, authHeader([Scope.READ]));
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with a modify bearer token$/,
+    run: async (state, method, url) => {
+      await requestWithHeaders(state, method, url, authHeader([Scope.MODIFY]));
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with an admin bearer token without equipment scopes$/,
+    run: async (state, method, url) => {
+      await requestWithHeaders(state, method, url, adminBearerWithoutEquipmentScopes());
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with the latest generated bearer token$/,
+    run: async (state, method, url) => {
+      assert.ok(state.latestGeneratedToken, "expected a generated bearer token");
+      await requestWithHeaders(state, method, url, { authorization: `Bearer ${state.latestGeneratedToken}` });
+    }
+  },
+  {
+    pattern: /^I try to register container "([^"]+)" of type "([^"]+)" at depot "([^"]+)" with a read bearer token$/,
+    run: async (state, containerNumber, equipmentType, currentDepot) => {
+      await requestWithHeaders(state, "POST", "/containers", authHeader([Scope.READ]), {
+        containerNumber,
+        equipmentType,
+        currentDepot
+      });
+    }
+  },
+  {
+    pattern: /^I register container "([^"]+)" of type "([^"]+)" at depot "([^"]+)" with an admin bearer token without equipment scopes$/,
+    run: async (state, containerNumber, equipmentType, currentDepot) => {
+      await requestWithHeaders(state, "POST", "/containers", adminBearerWithoutEquipmentScopes(), {
+        containerNumber,
+        equipmentType,
+        currentDepot
+      });
+    }
+  },
+  {
+    pattern: /^I generate a development bearer token for subject "([^"]+)" with read scope$/,
+    run: async (state, subject) => {
+      await requestWithHeaders(state, "POST", "/dev/generate-token", undefined, {
+        subject,
+        scopes: [Scope.READ],
+        expiresInMinutes: 60
+      });
+      if (state.latestStatusCode === 201) {
+        state.latestGeneratedToken = latestBody<{ token: string }>(state).token;
+      }
+    }
+  },
+  {
+    pattern: /^the latest JSON response has field "([^"]+)" equal to "([^"]+)"$/,
+    run: async (state, field, value) => {
+      assert.equal(latestBody<Record<string, unknown>>(state)[field], value);
+    }
+  },
+  {
+    pattern: /^the latest JSON response has boolean field "([^"]+)" equal to (true|false)$/,
+    run: async (state, field, value) => {
+      assert.equal(latestBody<Record<string, unknown>>(state)[field], value === "true");
+    }
+  },
+  {
+    pattern: /^the latest OpenAPI response exposes path "([^"]+)"$/,
+    run: async (state, path) => {
+      assert.ok(latestBody<{ paths: Record<string, unknown> }>(state).paths[path], `expected OpenAPI path ${path}`);
+    }
+  },
+  {
+    pattern: /^the latest response redirects to "([^"]+)"$/,
+    run: async (state, location) => {
+      assert.equal(state.latestHeaders.location, location);
+    }
+  },
+  {
+    pattern: /^the latest response content type starts with "([^"]+)"$/,
+    run: async (state, contentType) => {
+      assert.ok(
+        String(state.latestHeaders["content-type"] ?? "").startsWith(contentType),
+        `expected content type to start with ${contentType}`
+      );
+    }
+  },
+  {
+    pattern: /^the latest response body contains "([^"]+)"$/,
+    run: async (state, fragment) => {
+      assert.ok(state.latestBodyText.includes(fragment), `expected response body to contain ${fragment}`);
+    }
+  },
+  {
+    pattern: /^the latest response includes a generated bearer token$/,
+    run: async (state) => {
+      assert.match(latestBody<{ token: string }>(state).token, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     }
   },
   {
