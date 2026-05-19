@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { cloneAuthorizationRule, createSeedAuthorizationRules } from "../authorization-rules.js";
 import type { StoreSnapshot } from "../persistence/index.js";
 import { ContainerStatus, type EquipmentType } from "../types.js";
 import { cloneAuditEvent, createEmptyState, type StoreState } from "./shared.js";
@@ -7,6 +8,7 @@ import { cloneAuditEvent, createEmptyState, type StoreState } from "./shared.js"
 export function restoreState(snapshot: StoreSnapshot): StoreState {
   return {
     auditEvents: snapshot.auditEvents.map(cloneAuditEvent),
+    authorizationRules: new Map(snapshot.authorizationRules.map((rule) => [rule.routeKey, cloneAuthorizationRule(rule)])),
     equipmentTypes: new Map(snapshot.equipmentTypes.map((equipmentType) => [equipmentType.code, equipmentType])),
     users: new Map(snapshot.users.map((user) => [user.id, user])),
     containers: new Map(snapshot.containers.map((container) => [container.id, container])),
@@ -17,6 +19,7 @@ export function restoreState(snapshot: StoreSnapshot): StoreState {
 
 export function initializeState(seed = true): StoreState {
   const state = createEmptyState();
+  seedAuthorizationRules(state);
   if (seed) {
     seedState(state);
   }
@@ -26,11 +29,19 @@ export function initializeState(seed = true): StoreState {
 export function createSnapshot(state: StoreState): StoreSnapshot {
   return {
     auditEvents: state.auditEvents.map(cloneAuditEvent),
+    authorizationRules: Array.from(state.authorizationRules.values()).map(cloneAuthorizationRule),
     equipmentTypes: Array.from(state.equipmentTypes.values()),
     users: Array.from(state.users.values()),
     containers: Array.from(state.containers.values()),
     reservations: Array.from(state.reservations.values())
   };
+}
+
+function seedAuthorizationRules(state: StoreState): void {
+  state.authorizationRules.clear();
+  for (const rule of createSeedAuthorizationRules()) {
+    state.authorizationRules.set(rule.routeKey, rule);
+  }
 }
 
 function seedState(state: StoreState): void {

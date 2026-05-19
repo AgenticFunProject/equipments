@@ -1,3 +1,4 @@
+import { cloneAuthorizationRule, createSeedAuthorizationRules } from "../authorization-rules.js";
 import type { StoreSnapshot } from "./types.js";
 
 export function parseSnapshot(raw: string): StoreSnapshot {
@@ -5,6 +6,16 @@ export function parseSnapshot(raw: string): StoreSnapshot {
   const now = new Date().toISOString();
   return {
     auditEvents: parsed.auditEvents ?? [],
+    authorizationRules: Array.isArray(parsed.authorizationRules)
+      ? parsed.authorizationRules.map((rule) => ({
+        ...cloneAuthorizationRule(rule),
+        requiredScope: rule.requiredScope ?? null,
+        adminAccepted: rule.adminAccepted ?? !rule.public,
+        public: rule.public ?? false,
+        createdAt: rule.createdAt ?? now,
+        updatedAt: rule.updatedAt ?? rule.createdAt ?? now
+      }))
+      : createSeedAuthorizationRules(now),
     equipmentTypes: (parsed.equipmentTypes ?? []).map((equipmentType) => ({
       ...equipmentType,
       createdByUserId: equipmentType.createdByUserId ?? null,

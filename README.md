@@ -398,6 +398,8 @@ Production deployments on Azure Container Apps should run `npm run migrate` as a
 - `equipments:modify` is required for write routes such as `POST`, `PUT`, `PATCH`, and `DELETE`
 - callers can carry both scopes in a single token for full API access
 
+The current Fastify route authorization matrix is persisted as authorization-rule metadata in snapshots and relational stores. Each rule records the method, path pattern, controller/action, resource type, required scope, public-route flag, and whether admin role tokens are accepted.
+
 ### Runtime Storage Backends
 
 The service now supports runtime-selectable persistence entirely in TypeScript.

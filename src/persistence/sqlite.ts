@@ -2,8 +2,9 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { createSeedAuthorizationRules } from "../authorization-rules.js";
 import { DomainError } from "../errors.js";
-import type { AuditEvent, ContainerUnit, EquipmentType, LocalUser, Reservation } from "../types.js";
+import type { AuditEvent, AuthorizationRule, ContainerUnit, EquipmentType, LocalUser, Reservation } from "../types.js";
 
 import { parseSnapshot } from "./snapshot.js";
 import { SQLITE_SCHEMA_VERSION, type StorePersistence, type StoreSnapshot } from "./types.js";
@@ -45,6 +46,7 @@ export class SqlitePersistence implements StorePersistence {
         ...(row as Omit<AuditEvent, "requestContext"> & { requestContext: string }),
         requestContext: JSON.parse((row as { requestContext: string }).requestContext) as AuditEvent["requestContext"]
       }));
+    const authorizationRules = readSqliteAuthorizationRules(this.db);
 
     const equipmentTypes = this.db
       .prepare(
@@ -127,6 +129,7 @@ export class SqlitePersistence implements StorePersistence {
 
     return {
       auditEvents,
+      authorizationRules,
       equipmentTypes,
       users,
       containers,
@@ -239,6 +242,10 @@ export class SqlitePersistence implements StorePersistence {
         ensureSqliteUserProfileColumns(this.db);
         backfillSqliteUserProfileColumns(this.db);
         return;
+      case 5:
+        ensureSqliteAuthorizationRulesTable(this.db);
+        seedSqliteAuthorizationRulesTable(this.db);
+        return;
       default:
         throw new DomainError(`unsupported sqlite migration ${version}`, 500);
     }
@@ -341,9 +348,81 @@ export function backfillSqliteUserProfileColumns(db: DatabaseSync): void {
   `);
 }
 
+export function ensureSqliteAuthorizationRulesTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS authorization_rules (
+      route_key TEXT PRIMARY KEY,
+      method TEXT NOT NULL,
+      path_pattern TEXT NOT NULL,
+      controller TEXT NOT NULL,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      required_scope TEXT,
+      admin_accepted INTEGER NOT NULL,
+      is_public INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (method, path_pattern)
+    );
+  `);
+}
+
+export function seedSqliteAuthorizationRulesTable(db: DatabaseSync): void {
+  ensureSqliteAuthorizationRulesTable(db);
+
+  const insertAuthorizationRule = db.prepare(
+    `INSERT OR IGNORE INTO authorization_rules (
+      route_key,
+      method,
+      path_pattern,
+      controller,
+      action,
+      resource_type,
+      required_scope,
+      admin_accepted,
+      is_public,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  for (const rule of createSeedAuthorizationRules()) {
+    insertAuthorizationRule.run(
+      rule.routeKey,
+      rule.method,
+      rule.pathPattern,
+      rule.controller,
+      rule.action,
+      rule.resourceType,
+      rule.requiredScope,
+      rule.adminAccepted ? 1 : 0,
+      rule.public ? 1 : 0,
+      rule.createdAt,
+      rule.updatedAt
+    );
+  }
+}
+
 function writeSqliteSnapshot(db: DatabaseSync, snapshot: StoreSnapshot): void {
+  ensureSqliteAuthorizationRulesTable(db);
+
   const upsertMeta = db.prepare(
     "INSERT INTO store_meta (id, initialized) VALUES (1, 1) ON CONFLICT(id) DO UPDATE SET initialized = excluded.initialized"
+  );
+  const insertAuthorizationRule = db.prepare(
+    `INSERT INTO authorization_rules (
+      route_key,
+      method,
+      path_pattern,
+      controller,
+      action,
+      resource_type,
+      required_scope,
+      admin_accepted,
+      is_public,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertAuditEvent = db.prepare(
     `INSERT INTO audit_events (
@@ -418,8 +497,24 @@ function writeSqliteSnapshot(db: DatabaseSync, snapshot: StoreSnapshot): void {
   try {
     upsertMeta.run();
     db.exec(
-      "DELETE FROM audit_events; DELETE FROM reservation_containers; DELETE FROM reservations; DELETE FROM containers; DELETE FROM users; DELETE FROM equipment_types; DELETE FROM store_snapshots;"
+      "DELETE FROM audit_events; DELETE FROM authorization_rules; DELETE FROM reservation_containers; DELETE FROM reservations; DELETE FROM containers; DELETE FROM users; DELETE FROM equipment_types; DELETE FROM store_snapshots;"
     );
+
+    for (const rule of snapshot.authorizationRules) {
+      insertAuthorizationRule.run(
+        rule.routeKey,
+        rule.method,
+        rule.pathPattern,
+        rule.controller,
+        rule.action,
+        rule.resourceType,
+        rule.requiredScope,
+        rule.adminAccepted ? 1 : 0,
+        rule.public ? 1 : 0,
+        rule.createdAt,
+        rule.updatedAt
+      );
+    }
 
     for (const auditEvent of snapshot.auditEvents) {
       insertAuditEvent.run(
@@ -500,6 +595,37 @@ function writeSqliteSnapshot(db: DatabaseSync, snapshot: StoreSnapshot): void {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function readSqliteAuthorizationRules(db: DatabaseSync): AuthorizationRule[] {
+  const rows = db
+    .prepare(
+      `SELECT
+        route_key AS routeKey,
+        method,
+        path_pattern AS pathPattern,
+        controller,
+        action,
+        resource_type AS resourceType,
+        required_scope AS requiredScope,
+        admin_accepted AS adminAccepted,
+        is_public AS public,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM authorization_rules
+      ORDER BY route_key`
+    )
+    .all() as unknown as Array<Omit<AuthorizationRule, "adminAccepted" | "public"> & { adminAccepted: number; public: number }>;
+
+  if (!rows.length) {
+    return createSeedAuthorizationRules();
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    adminAccepted: Boolean(row.adminAccepted),
+    public: Boolean(row.public)
+  }));
 }
 
 function ensureSqliteColumn(db: DatabaseSync, tableName: string, columnName: string, definition: string): void {

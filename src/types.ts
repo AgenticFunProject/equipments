@@ -88,6 +88,20 @@ export interface AuditEvent {
   errorMessage: string | null;
 }
 
+export interface AuthorizationRule {
+  routeKey: string;
+  method: string;
+  pathPattern: string;
+  controller: string;
+  action: string;
+  resourceType: string;
+  requiredScope: string | null;
+  adminAccepted: boolean;
+  public: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ReservationItemRequest {
   type: string;
   quantity: number;

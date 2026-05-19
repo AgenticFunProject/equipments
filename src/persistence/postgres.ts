@@ -1,6 +1,7 @@
 import { MessageChannel, receiveMessageOnPort, Worker, type MessagePort } from "node:worker_threads";
 
-import type { AuditEvent, AuditOutcome, ContainerStatus, ContainerUnit, EquipmentType, LocalUser, Reservation, ReservationStatus } from "../types.js";
+import { createSeedAuthorizationRules } from "../authorization-rules.js";
+import type { AuditEvent, AuditOutcome, AuthorizationRule, ContainerStatus, ContainerUnit, EquipmentType, LocalUser, Reservation, ReservationStatus } from "../types.js";
 import { AuditOutcome as AuditOutcomeValues, ContainerStatus as ContainerStatusValues, ReservationStatus as ReservationStatusValues } from "../types.js";
 import { DomainError } from "../errors.js";
 
@@ -102,6 +103,23 @@ export async function loadPostgresSnapshot(client: PgClientLike): Promise<StoreS
     ORDER BY timestamp, id`
   )).rows as unknown as AuditEvent[];
 
+  const authorizationRules = (await client.query(
+    `SELECT
+      route_key AS "routeKey",
+      method,
+      path_pattern AS "pathPattern",
+      controller,
+      action,
+      resource_type AS "resourceType",
+      required_scope AS "requiredScope",
+      admin_accepted AS "adminAccepted",
+      is_public AS "public",
+      created_at AS "createdAt",
+      updated_at AS "updatedAt"
+    FROM authorization_rules
+    ORDER BY route_key`
+  )).rows as unknown as AuthorizationRule[];
+
   const equipmentTypes = (await client.query(
     `SELECT
       code,
@@ -194,6 +212,7 @@ export async function loadPostgresSnapshot(client: PgClientLike): Promise<StoreS
 
   return {
     auditEvents,
+    authorizationRules: authorizationRules.length ? authorizationRules : createSeedAuthorizationRules(),
     equipmentTypes,
     users,
     containers,
@@ -218,11 +237,43 @@ export async function writePostgresSnapshot(client: PgClientLike, snapshot: Stor
       [POSTGRES_SCHEMA_VERSION]
     );
     await client.query("DELETE FROM audit_events");
+    await client.query("DELETE FROM authorization_rules");
     await client.query("DELETE FROM reservation_containers");
     await client.query("DELETE FROM reservations");
     await client.query("DELETE FROM containers");
     await client.query("DELETE FROM equipment_types");
     await client.query("DELETE FROM users");
+
+    for (const rule of snapshot.authorizationRules) {
+      await client.query(
+        `INSERT INTO authorization_rules (
+          route_key,
+          method,
+          path_pattern,
+          controller,
+          action,
+          resource_type,
+          required_scope,
+          admin_accepted,
+          is_public,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          rule.routeKey,
+          rule.method,
+          rule.pathPattern,
+          rule.controller,
+          rule.action,
+          rule.resourceType,
+          rule.requiredScope,
+          rule.adminAccepted,
+          rule.public,
+          rule.createdAt,
+          rule.updatedAt
+        ]
+      );
+    }
 
     for (const user of snapshot.users) {
       await client.query(

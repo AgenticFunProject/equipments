@@ -1,5 +1,6 @@
 import { parentPort, workerData, type MessagePort } from "node:worker_threads";
 
+import { createSeedAuthorizationRules } from "../authorization-rules.js";
 import { assertPostgresSchemaReady, loadPostgresSnapshot, writePostgresSnapshot, type PgPoolLike } from "./postgres.js";
 import type { StoreSnapshot } from "./types.js";
 
@@ -71,6 +72,7 @@ async function handleRequest(request: PostgresWorkerRequest): Promise<void> {
 function emptySnapshot(): StoreSnapshot {
   return {
     auditEvents: [],
+    authorizationRules: createSeedAuthorizationRules(),
     equipmentTypes: [],
     users: [],
     containers: [],

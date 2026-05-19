@@ -1,5 +1,5 @@
 import { DomainError } from "../errors.js";
-import { type AuditEvent, type ContainerUnit, ContainerStatus, type EquipmentType, type LocalUser, type Reservation } from "../types.js";
+import { type AuditEvent, type AuthorizationRule, type ContainerUnit, ContainerStatus, type EquipmentType, type LocalUser, type Reservation } from "../types.js";
 
 export interface ActorIdentity {
   issuer: string;
@@ -14,6 +14,7 @@ export interface ListContainersFilter {
 
 export interface StoreState {
   auditEvents: AuditEvent[];
+  authorizationRules: Map<string, AuthorizationRule>;
   equipmentTypes: Map<string, EquipmentType>;
   users: Map<string, LocalUser>;
   containers: Map<string, ContainerUnit>;
@@ -24,6 +25,7 @@ export interface StoreState {
 export function createEmptyState(): StoreState {
   return {
     auditEvents: [],
+    authorizationRules: new Map(),
     equipmentTypes: new Map(),
     users: new Map(),
     containers: new Map(),

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+import { createSeedAuthorizationRules } from "../src/authorization-rules.js";
+import { Scope } from "../src/auth.js";
 import {
   createPersistence,
   loadRuntimeConfig,
@@ -18,6 +20,7 @@ import {
   STORAGE_SQLITE_PATH_ENV,
   StorageBackend
 } from "../src/persistence/index.js";
+import { MemoryPersistence } from "../src/persistence/memory.js";
 import { runPostgresMigrations, runSqliteMigrations } from "../src/persistence/migrations/index.js";
 import { parseSnapshot } from "../src/persistence/snapshot.js";
 import type { StoreSnapshot } from "../src/persistence/index.js";
@@ -27,6 +30,7 @@ import { ContainerStatus } from "../src/types.js";
 function createSnapshot(): StoreSnapshot {
   return {
     auditEvents: [],
+    authorizationRules: createSeedAuthorizationRules("2026-04-22T00:00:00.000Z"),
     equipmentTypes: [
       {
         code: "45HC",
@@ -84,7 +88,13 @@ function createSnapshot(): StoreSnapshot {
 }
 
 function normalizeSnapshot(snapshot: StoreSnapshot | null): StoreSnapshot | null {
-  return snapshot ? JSON.parse(JSON.stringify(snapshot)) : snapshot;
+  if (!snapshot) {
+    return snapshot;
+  }
+
+  const normalized = JSON.parse(JSON.stringify(snapshot)) as StoreSnapshot;
+  normalized.authorizationRules.sort((left, right) => left.routeKey.localeCompare(right.routeKey));
+  return normalized;
 }
 
 function normalizeRecord<T>(value: T): T {
@@ -133,6 +143,9 @@ class FakePgClient {
     }
     if (normalized.includes("CREATE TABLE IF NOT EXISTS audit_events")) {
       this.tables.add("audit_events");
+    }
+    if (normalized.includes("CREATE TABLE IF NOT EXISTS authorization_rules")) {
+      this.tables.add("authorization_rules");
     }
     if (normalized.startsWith("INSERT INTO store_meta")) {
       this.schemaVersion ??= 0;
@@ -265,6 +278,94 @@ test("loadRuntimeConfig accepts postgres url", () => {
   });
 });
 
+test("store seeds authorization rules for the current Fastify route matrix", () => {
+  const store = createStoreFromRuntimeConfig({ backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false }, false);
+  const rules = store.listAuthorizationRules();
+  const expectedRouteKeys = [
+    "GET /",
+    "GET /availability",
+    "GET /containers",
+    "GET /containers/:id",
+    "GET /equipment-types",
+    "GET /health",
+    "GET /openapi.json",
+    "GET /playground",
+    "GET /playground/playground.css",
+    "GET /playground/playground.js",
+    "POST /containers",
+    "POST /containers/:id/pickup",
+    "POST /containers/:id/return",
+    "POST /dev/clear-all-data",
+    "POST /dev/generate-token",
+    "POST /dev/reset-all-data",
+    "POST /equipment-types",
+    "POST /events",
+    "POST /reservations",
+    "PUT /equipment-types/:code",
+    "PATCH /containers/:id/status",
+    "DELETE /reservations/:bookingReference"
+  ].sort();
+
+  assert.deepEqual(rules.map((rule) => rule.routeKey).sort(), expectedRouteKeys);
+
+  const health = rules.find((rule) => rule.routeKey === "GET /health");
+  assert.ok(health);
+  assert.deepEqual(
+    {
+      requiredScope: health.requiredScope,
+      adminAccepted: health.adminAccepted,
+      public: health.public
+    },
+    {
+      requiredScope: null,
+      adminAccepted: false,
+      public: true
+    }
+  );
+
+  const listContainers = rules.find((rule) => rule.routeKey === "GET /containers");
+  assert.ok(listContainers);
+  assert.deepEqual(
+    {
+      controller: listContainers.controller,
+      action: listContainers.action,
+      resourceType: listContainers.resourceType,
+      requiredScope: listContainers.requiredScope,
+      adminAccepted: listContainers.adminAccepted,
+      public: listContainers.public
+    },
+    {
+      controller: "ContainersController",
+      action: "list",
+      resourceType: "container",
+      requiredScope: Scope.READ,
+      adminAccepted: true,
+      public: false
+    }
+  );
+
+  const clearData = rules.find((rule) => rule.routeKey === "POST /dev/clear-all-data");
+  assert.ok(clearData);
+  assert.equal(clearData.requiredScope, Scope.MODIFY);
+  assert.equal(clearData.adminAccepted, true);
+});
+
+test("memory snapshots clone authorization rules", () => {
+  const persistence = new MemoryPersistence();
+  const snapshot = createSnapshot();
+
+  persistence.save(snapshot);
+  const loaded = persistence.load();
+  assert.deepEqual(loaded?.authorizationRules, snapshot.authorizationRules);
+
+  if (!loaded) {
+    assert.fail("snapshot should load after save");
+  }
+  loaded.authorizationRules[0].action = "mutated";
+
+  assert.notEqual(persistence.load()?.authorizationRules[0].action, "mutated");
+});
+
 test("postgres migrations initialize a fresh schema", async () => {
   const pool = new FakePgPool();
 
@@ -273,10 +374,11 @@ test("postgres migrations initialize a fresh schema", async () => {
     () => pool
   );
 
-  assert.deepEqual(result.executed, ["001-store-meta-and-snapshots", "002-relational-state"]);
+  assert.deepEqual(result.executed, ["001-store-meta-and-snapshots", "002-relational-state", "003-authorization-rules"]);
   assert.deepEqual(result.pending, []);
   assert.equal(pool.client.schemaVersion, POSTGRES_SCHEMA_VERSION);
   assert.equal(pool.client.tables.has("store_meta"), true);
+  assert.equal(pool.client.tables.has("authorization_rules"), true);
   assert.equal(pool.client.tables.has("audit_events"), true);
   assert.equal(pool.client.tables.has("reservation_containers"), true);
 });
@@ -293,7 +395,8 @@ test("sqlite migrations keep the database open until the async plan completes", 
       "001-initial-schema",
       "002-audit-and-users",
       "003-audit-metadata-and-legacy-snapshot",
-      "004-user-profiles"
+      "004-user-profiles",
+      "005-authorization-rules"
     ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -341,6 +444,7 @@ test(
       storeA.pickupContainer(created.assignedContainers[0].containerId);
 
       const storeB = createStoreFromRuntimeConfig(config, false);
+      assert.equal(storeB.listAuthorizationRules().some((rule) => rule.routeKey === "POST /reservations"), true);
       assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
       assert.deepEqual(
         storeB.listContainers({ depot: "NLRTM-01" }).map((item) => ({ id: item.id, status: item.status, containerNumber: item.containerNumber })),
@@ -386,6 +490,7 @@ test("db backend persists store state across restarts", () => {
 
     const storeB = createStoreFromRuntimeConfig({ backend: StorageBackend.DB, path }, false);
     assert.equal(created.code, "45HC");
+    assert.equal(storeB.listAuthorizationRules().some((rule) => rule.routeKey === "GET /equipment-types"), true);
     assert.ok(storeB.listEquipmentTypes().some((item) => item.code === "45HC"));
     assert.equal(storeB.listAuditEvents().length, 1);
     assert.equal(storeB.listAuditEvents()[0].actor, "ops-user");
@@ -432,6 +537,7 @@ test("sqlite backend persists store state across restarts", () => {
 
     const storeB = createStoreFromRuntimeConfig({ backend: StorageBackend.SQLITE, path }, false);
     assert.equal(created.containerNumber, "CONU9999999");
+    assert.equal(storeB.listAuthorizationRules().some((rule) => rule.routeKey === "POST /containers"), true);
     assert.ok(storeB.listContainers({ depot: "NLRTM-01" }).some((item) => item.containerNumber === "CONU9999999"));
     assert.equal(storeB.listAuditEvents().length, 1);
     assert.equal(storeB.listAuditEvents()[0].resourceId, created.id);
@@ -499,6 +605,22 @@ test("sqlite backend stores state in relational tables", () => {
       actor: string;
       action: string;
     };
+    const authorizationRuleRow = db
+      .prepare(
+        `SELECT
+          route_key AS routeKey,
+          required_scope AS requiredScope,
+          admin_accepted AS adminAccepted,
+          is_public AS public
+        FROM authorization_rules
+        WHERE route_key = ?`
+      )
+      .get("POST /reservations") as {
+      routeKey: string;
+      requiredScope: string;
+      adminAccepted: number;
+      public: number;
+    };
 
     assert.equal(userVersion.user_version, SQLITE_SCHEMA_VERSION);
     assert.equal(meta.initialized, 1);
@@ -509,6 +631,12 @@ test("sqlite backend stores state in relational tables", () => {
     assert.equal(reservationRow.originDepot, "NLRTM-01");
     assert.equal(auditRow.actor, "planner");
     assert.equal(auditRow.action, "reservation.create");
+    assert.deepEqual(normalizeRecord(authorizationRuleRow), {
+      routeKey: "POST /reservations",
+      requiredScope: Scope.MODIFY,
+      adminAccepted: 1,
+      public: 0
+    });
     assert.deepEqual(
       links.map((item) => item.containerId),
       [first.id, second.id]
@@ -556,7 +684,7 @@ test("sqlite backend persists local users in relational tables", () => {
       updatedAt: string;
     };
 
-    assert.deepEqual(normalizeSnapshot(loaded), snapshot);
+    assert.deepEqual(normalizeSnapshot(loaded), normalizeSnapshot(snapshot));
     assert.deepEqual(normalizeRecord(userRow), snapshot.users[0]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -761,6 +889,8 @@ test("sqlite backend migrates older schema versions forward", () => {
     const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
     const usersTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").get() as { name: string };
     const auditTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'").get() as { name: string };
+    const authorizationRulesTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'authorization_rules'").get() as { name: string };
+    const authorizationRuleCount = db.prepare("SELECT COUNT(*) AS count FROM authorization_rules").get() as { count: number };
     const equipmentColumns = db.prepare("PRAGMA table_info(equipment_types)").all() as Array<{ name: string }>;
     const containerColumns = db.prepare("PRAGMA table_info(containers)").all() as Array<{ name: string }>;
     const reservationColumns = db.prepare("PRAGMA table_info(reservations)").all() as Array<{ name: string }>;
@@ -769,6 +899,8 @@ test("sqlite backend migrates older schema versions forward", () => {
     assert.equal(userVersion.user_version, SQLITE_SCHEMA_VERSION);
     assert.equal(usersTable.name, "users");
     assert.equal(auditTable.name, "audit_events");
+    assert.equal(authorizationRulesTable.name, "authorization_rules");
+    assert.equal(authorizationRuleCount.count > 0, true);
     assert.ok(userColumns.some((column) => column.name === "external_identity"));
     assert.ok(userColumns.some((column) => column.name === "display_name"));
     assert.ok(userColumns.some((column) => column.name === "email"));

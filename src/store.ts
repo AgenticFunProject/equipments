@@ -1,6 +1,7 @@
 import { createPersistence, type RuntimeConfig, type StorePersistence } from "./persistence/index.js";
-import type { AuditEvent, ContainerUnit, CreateReservationRequest, EquipmentType, Reservation } from "./types.js";
+import type { AuditEvent, AuthorizationRule, ContainerUnit, CreateReservationRequest, EquipmentType, Reservation } from "./types.js";
 import { listAuditEvents, recordAuditEvent } from "./store/audit.js";
+import { listAuthorizationRules } from "./store/authorization-rules.js";
 import {
   getAvailability,
   getContainer,
@@ -50,6 +51,10 @@ export class EquipmentsStore {
 
   listAuditEvents(): AuditEvent[] {
     return listAuditEvents(this.state);
+  }
+
+  listAuthorizationRules(): AuthorizationRule[] {
+    return listAuthorizationRules(this.state);
   }
 
   recordAuditEvent(event: Omit<AuditEvent, "id">): AuditEvent {
