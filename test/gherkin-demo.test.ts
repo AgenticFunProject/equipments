@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import test from "node:test";
 
 import type { FastifyInstance } from "fastify";
@@ -23,13 +23,54 @@ interface DemoState {
   latestContainerId: string | null;
 }
 
+interface FeatureDocument {
+  filePath: string;
+  name: string;
+  backgroundSteps: FeatureStep[];
+  scenarios: FeatureScenario[];
+}
+
+interface FeatureScenario {
+  name: string;
+  lineNumber: number;
+  steps: FeatureStep[];
+}
+
+interface FeatureStep {
+  keyword: string;
+  text: string;
+  lineNumber: number;
+}
+
 interface StepDefinition {
   pattern: RegExp;
   run: (state: DemoState, ...captures: string[]) => Promise<void>;
 }
 
-test("DEMO.md Gherkin flow runs automatically", async (t) => {
-  const state: DemoState = {
+const featureDirectory = join(import.meta.dirname, "features");
+const featureDocuments = loadFeatureDocuments(featureDirectory);
+
+for (const feature of featureDocuments) {
+  for (const scenario of feature.scenarios) {
+    test(`${feature.name}: ${scenario.name}`, async (t) => {
+      const state = createDemoState();
+
+      t.after(async () => {
+        await state.app?.close();
+        if (state.tempDir) {
+          rmSync(state.tempDir, { recursive: true, force: true });
+        }
+      });
+
+      for (const step of [...feature.backgroundSteps, ...scenario.steps]) {
+        await runStep(step, state, feature, scenario);
+      }
+    });
+  }
+}
+
+function createDemoState(): DemoState {
+  return {
     app: null,
     tempDir: null,
     latestStatusCode: null,
@@ -37,31 +78,96 @@ test("DEMO.md Gherkin flow runs automatically", async (t) => {
     latestReservedContainerId: null,
     latestContainerId: null
   };
-
-  t.after(async () => {
-    await state.app?.close();
-    if (state.tempDir) {
-      rmSync(state.tempDir, { recursive: true, force: true });
-    }
-  });
-
-  const steps = parseFeatureSteps(join(import.meta.dirname, "features", "demo.feature"));
-  for (const step of steps) {
-    await runStep(step, state);
-  }
-});
-
-function parseFeatureSteps(path: string): string[] {
-  return readFileSync(path, "utf8")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => /^(Given|When|Then|And) /.test(line))
-    .map((line) => line.replace(/^(Given|When|Then|And) /, ""));
 }
 
-async function runStep(step: string, state: DemoState): Promise<void> {
+function loadFeatureDocuments(directory: string): FeatureDocument[] {
+  const featureFiles = readdirSync(directory)
+    .filter((entry) => entry.endsWith(".feature"))
+    .sort((left, right) => left.localeCompare(right))
+    .map((entry) => join(directory, entry));
+
+  assert.notEqual(featureFiles.length, 0, `expected at least one .feature file in ${directory}`);
+
+  return featureFiles.map(parseFeatureFile);
+}
+
+function parseFeatureFile(filePath: string): FeatureDocument {
+  const backgroundSteps: FeatureStep[] = [];
+  const scenarios: FeatureScenario[] = [];
+  let featureName = basename(filePath);
+  let currentScenario: FeatureScenario | null = null;
+  let currentSection: "feature" | "background" | "scenario" = "feature";
+
+  const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const [index, rawLine] of lines.entries()) {
+    const lineNumber = index + 1;
+    const line = rawLine.trim();
+
+    if (!line || line.startsWith("#") || line.startsWith("@")) {
+      continue;
+    }
+
+    if (line.startsWith("Feature:")) {
+      featureName = line.slice("Feature:".length).trim();
+      currentSection = "feature";
+      continue;
+    }
+
+    if (line.startsWith("Rule:")) {
+      currentSection = "feature";
+      continue;
+    }
+
+    if (line.startsWith("Background:")) {
+      currentScenario = null;
+      currentSection = "background";
+      continue;
+    }
+
+    const scenarioMatch = line.match(/^Scenario(?: Outline)?:\s*(.+)$/);
+    if (scenarioMatch) {
+      currentScenario = { name: scenarioMatch[1].trim(), lineNumber, steps: [] };
+      scenarios.push(currentScenario);
+      currentSection = "scenario";
+      continue;
+    }
+
+    const stepMatch = line.match(/^(Given|When|Then|And|But)\s+(.+)$/);
+    if (stepMatch) {
+      const step = { keyword: stepMatch[1], text: stepMatch[2], lineNumber };
+      if (currentSection === "background") {
+        backgroundSteps.push(step);
+      } else if (currentScenario) {
+        currentScenario.steps.push(step);
+      } else {
+        throw new Error(`Step declared outside a Background or Scenario at ${filePath}:${lineNumber}`);
+      }
+      continue;
+    }
+
+    if (line.startsWith("|") || line.startsWith("Examples:") || line.startsWith('"""') || line.startsWith("```")) {
+      throw new Error(`Unsupported Gherkin syntax at ${filePath}:${lineNumber}: ${line}`);
+    }
+
+    throw new Error(`Unrecognized Gherkin line at ${filePath}:${lineNumber}: ${line}`);
+  }
+
+  assert.notEqual(scenarios.length, 0, `expected at least one Scenario in ${filePath}`);
+  for (const scenario of scenarios) {
+    assert.notEqual(scenario.steps.length, 0, `expected Scenario "${scenario.name}" in ${filePath} to contain steps`);
+  }
+
+  return { filePath, name: featureName, backgroundSteps, scenarios };
+}
+
+async function runStep(
+  step: FeatureStep,
+  state: DemoState,
+  feature: FeatureDocument,
+  scenario: FeatureScenario
+): Promise<void> {
   for (const definition of stepDefinitions) {
-    const match = step.match(definition.pattern);
+    const match = step.text.match(definition.pattern);
     if (!match) {
       continue;
     }
@@ -70,7 +176,15 @@ async function runStep(step: string, state: DemoState): Promise<void> {
     return;
   }
 
-  throw new Error(`No step definition matched: ${step}`);
+  throw new Error(
+    [
+      `No step definition matched: ${step.keyword} ${step.text}`,
+      `Location: ${relative(process.cwd(), feature.filePath)}:${step.lineNumber}`,
+      `Scenario: ${scenario.name} (line ${scenario.lineNumber})`,
+      "Known step definitions:",
+      ...stepDefinitions.map((definition) => `  - ${definition.pattern}`)
+    ].join("\n")
+  );
 }
 
 async function request(state: DemoState, method: string, url: string, payload?: unknown): Promise<void> {
