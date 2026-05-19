@@ -8,7 +8,12 @@ import test from "node:test";
 import type { FastifyInstance } from "fastify";
 
 import { loadBearerAuthConfig, Scope } from "../src/auth.js";
-import { StorageBackend } from "../src/persistence/index.js";
+import {
+  loadRuntimeConfig,
+  STORAGE_BACKEND_ENV,
+  StorageBackend,
+  type RuntimeConfig
+} from "../src/persistence/index.js";
 import { buildServer } from "../src/server.js";
 import { createStoreFromRuntimeConfig, EquipmentsStore } from "../src/store.js";
 
@@ -16,7 +21,11 @@ const authConfig = loadBearerAuthConfig({});
 
 interface DemoState {
   app: FastifyInstance | null;
+  store: EquipmentsStore | null;
   tempDir: string | null;
+  runtimeConfig: RuntimeConfig | null;
+  resolvedRuntimeConfig: RuntimeConfig | null;
+  runtimeConfigError: string | null;
   latestStatusCode: number | null;
   latestHeaders: Record<string, string | number | string[] | undefined>;
   latestBody: unknown;
@@ -25,6 +34,7 @@ interface DemoState {
   latestAssignedContainerIds: string[];
   latestContainerId: string | null;
   latestGeneratedToken: string | null;
+  latestLocalUserId: string | null;
 }
 
 interface FeatureDocument {
@@ -76,7 +86,11 @@ for (const feature of featureDocuments) {
 function createDemoState(): DemoState {
   return {
     app: null,
+    store: null,
     tempDir: null,
+    runtimeConfig: null,
+    resolvedRuntimeConfig: null,
+    runtimeConfigError: null,
     latestStatusCode: null,
     latestHeaders: {},
     latestBody: null,
@@ -84,7 +98,8 @@ function createDemoState(): DemoState {
     latestReservedContainerId: null,
     latestAssignedContainerIds: [],
     latestContainerId: null,
-    latestGeneratedToken: null
+    latestGeneratedToken: null,
+    latestLocalUserId: null
   };
 }
 
@@ -223,10 +238,10 @@ function authHeaderForMethod(method: string) {
   return authHeader(scopes);
 }
 
-function authHeader(scopes: string[], overrides: { role?: string } = {}) {
+function authHeader(scopes: string[], overrides: { role?: string; subject?: string } = {}) {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
-    sub: "demo-client",
+    sub: overrides.subject ?? "demo-client",
     iss: authConfig.issuer,
     aud: authConfig.audience,
     exp: now + 3600,
@@ -247,8 +262,43 @@ function adminBearerWithoutEquipmentScopes() {
   return authHeader([], { role: "admin" });
 }
 
+function authHeaderWithCallerMetadata(scopes: string[], subject: string) {
+  return {
+    ...authHeader(scopes, { subject }),
+    "x-auth-issuer": authConfig.issuer,
+    "x-auth-subject": subject
+  };
+}
+
 function latestBody<T>(state: DemoState): T {
   return state.latestBody as T;
+}
+
+async function replaceService(
+  state: DemoState,
+  store: EquipmentsStore,
+  runtimeConfig: RuntimeConfig | undefined,
+  devMode?: boolean
+): Promise<void> {
+  await state.app?.close();
+  state.store = store;
+  state.runtimeConfig = runtimeConfig ?? null;
+  state.app = buildServer(store, runtimeConfig, devMode, authConfig);
+}
+
+async function startServiceFromRuntimeConfig(state: DemoState, runtimeConfig: RuntimeConfig, seed: boolean): Promise<void> {
+  await replaceService(state, createStoreFromRuntimeConfig(runtimeConfig, seed), runtimeConfig);
+}
+
+function captureRuntimeConfig(state: DemoState, env: Record<string, string | undefined>): void {
+  state.resolvedRuntimeConfig = null;
+  state.runtimeConfigError = null;
+
+  try {
+    state.resolvedRuntimeConfig = loadRuntimeConfig(env);
+  } catch (error) {
+    state.runtimeConfigError = error instanceof Error ? error.message : String(error);
+  }
 }
 
 async function reserveContainers(
@@ -277,23 +327,63 @@ const stepDefinitions: StepDefinition[] = [
     run: async (state) => {
       state.tempDir = mkdtempSync(join(tmpdir(), "equipments-gherkin-"));
       const path = join(state.tempDir, "demo.sqlite");
-      const store = createStoreFromRuntimeConfig(
-        { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true },
-        true
+      await startServiceFromRuntimeConfig(state, { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true }, true);
+    }
+  },
+  {
+    pattern: /^the equipments service is running with memory persistence and no seeded data$/,
+    run: async (state) => {
+      await startServiceFromRuntimeConfig(
+        state,
+        { backend: StorageBackend.MEMORY, path: "", sqliteEmptyOnFirstBoot: false },
+        false
       );
-      state.app = buildServer(store, { backend: StorageBackend.SQLITE, path, sqliteEmptyOnFirstBoot: true }, undefined, authConfig);
+    }
+  },
+  {
+    pattern: /^I restart the service with the same runtime storage and no seeded data$/,
+    run: async (state) => {
+      assert.ok(state.runtimeConfig, "expected a runtime storage configuration");
+      await startServiceFromRuntimeConfig(state, state.runtimeConfig, false);
+    }
+  },
+  {
+    pattern: /^no persistence environment is configured$/,
+    run: async (state) => {
+      captureRuntimeConfig(state, {});
+    }
+  },
+  {
+    pattern: /^runtime storage environment requests "([^"]+)" without (?:a persistence path|a connection string)$/,
+    run: async (state, backend) => {
+      captureRuntimeConfig(state, { [STORAGE_BACKEND_ENV]: backend });
+    }
+  },
+  {
+    pattern: /^runtime storage uses "([^"]+)" with no persistent path$/,
+    run: async (state, backend) => {
+      assert.equal(state.runtimeConfigError, null);
+      assert.ok(state.resolvedRuntimeConfig, "expected runtime storage configuration");
+      assert.equal(state.resolvedRuntimeConfig.backend, backend);
+      assert.equal(state.resolvedRuntimeConfig.path, "");
+    }
+  },
+  {
+    pattern: /^runtime storage configuration fails with "([^"]+)"$/,
+    run: async (state, fragment) => {
+      assert.match(state.runtimeConfigError ?? "", new RegExp(fragment));
     }
   },
   {
     pattern: /^the seeded equipments service is running$/,
     run: async (state) => {
-      state.app = buildServer(new EquipmentsStore(true), undefined, undefined, authConfig);
+      await replaceService(state, new EquipmentsStore(true), undefined);
     }
   },
   {
     pattern: /^the seeded equipments service is running outside development mode$/,
     run: async (state) => {
-      state.app = buildServer(new EquipmentsStore(true), undefined, false, authConfig);
+      await replaceService(state, new EquipmentsStore(true), undefined, false);
     }
   },
   {
@@ -442,6 +532,18 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I create equipment type "([^"]+)" described as "([^"]+)" with nominal length "([^"]+)" and max payload (\d+) as caller "([^"]+)"$/,
+    run: async (state, code, description, nominalLength, maxPayloadKg, subject) => {
+      await requestWithHeaders(state, "POST", "/equipment-types", authHeaderWithCallerMetadata([Scope.MODIFY], subject), {
+        code,
+        description,
+        nominalLength,
+        maxPayloadKg: Number(maxPayloadKg)
+      });
+      assert.equal(state.latestStatusCode, 201);
+    }
+  },
+  {
     pattern: /^I try to create equipment type "([^"]+)" described as "([^"]+)" with nominal length "([^"]+)" and max payload (\d+)$/,
     run: async (state, code, description, nominalLength, maxPayloadKg) => {
       await request(state, "POST", "/equipment-types", {
@@ -482,6 +584,51 @@ const stepDefinitions: StepDefinition[] = [
         .equipmentTypes.find((entry) => entry.code === code);
       assert.ok(item, `expected equipment type ${code}`);
       assert.equal(item.description, description);
+    }
+  },
+  {
+    pattern: /^the equipment type catalog does not include "([^"]+)"$/,
+    run: async (state, code) => {
+      await request(state, "GET", "/equipment-types");
+      assert.equal(state.latestStatusCode, 200);
+      const item = latestBody<{ equipmentTypes: Array<{ code: string }> }>(state)
+        .equipmentTypes.find((entry) => entry.code === code);
+      assert.equal(item, undefined);
+    }
+  },
+  {
+    pattern: /^the latest JSON response has persisted local user metadata$/,
+    run: async (state) => {
+      const body = latestBody<{ createdByUserId: string | null; lastModifiedByUserId: string | null }>(state);
+      assert.ok(body.createdByUserId, "expected createdByUserId to be present");
+      assert.equal(body.lastModifiedByUserId, body.createdByUserId);
+      state.latestLocalUserId = body.createdByUserId;
+    }
+  },
+  {
+    pattern: /^equipment type "([^"]+)" still has the same local user metadata$/,
+    run: async (state, code) => {
+      assert.ok(state.latestLocalUserId, "expected a captured local user id");
+      await request(state, "GET", "/equipment-types");
+      assert.equal(state.latestStatusCode, 200);
+      const item = latestBody<{
+        equipmentTypes: Array<{ code: string; createdByUserId: string | null; lastModifiedByUserId: string | null }>;
+      }>(state).equipmentTypes.find((entry) => entry.code === code);
+      assert.ok(item, `expected equipment type ${code}`);
+      assert.equal(item.createdByUserId, state.latestLocalUserId);
+      assert.equal(item.lastModifiedByUserId, state.latestLocalUserId);
+    }
+  },
+  {
+    pattern: /^the runtime audit log contains a successful "([^"]+)" event for "([^"]+)"$/,
+    run: async (state, action, resourceId) => {
+      assert.ok(state.store, "expected access to the runtime store");
+      const event = state.store.listAuditEvents().find((candidate) => (
+        candidate.action === action &&
+        candidate.resourceId === resourceId &&
+        candidate.outcome === "success"
+      ));
+      assert.ok(event, `expected successful audit event ${action} for ${resourceId}`);
     }
   },
   {
