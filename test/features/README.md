@@ -1,54 +1,56 @@
-# Gherkin Feature Coverage Map
+# Gherkin Black-Box Contract Coverage Map
 
-The executable behavior specs in this directory are discovered by
-`test/gherkin-demo.test.ts`. Each `*.feature` file may contain multiple
-scenarios; the runner executes every scenario with fresh service state.
+The executable specs in this directory are the black-box acceptance contract for
+the Equipments service. `test/gherkin-demo.test.ts` discovers every
+`*.feature` file, parses each `Scenario`, and runs it with fresh scenario state.
 
-## Current Coverage
+A replacement implementation may use a different data layer, schema, migration
+system, or internal model if it passes this Gherkin contract: the externally
+visible HTTP responses, public assets, authorization outcomes, persistence
+effects, and lifecycle behavior must remain equivalent.
 
-| Feature file | Behavior area | Status | Notes |
-| --- | --- | --- | --- |
-| `audit-metadata.feature` | Audit metadata and local callers | Active | Covers API-visible caller metadata, stable local user reuse across reservation/container writes, partial caller header rejection, and read routes not emitting audit events. |
-| `auth.feature` | Bearer authentication | Active | Covers anonymous rejection, read-vs-modify scopes, admin role access without equipment scopes, Users Service admin JWT validation, and protected endpoint authorization. |
-| `demo.feature` | Documented empty-database equipment flow | Active | Covers catalog creation, container registration, availability, reservation, pickup, return, release, and release rejection after dispatch. |
-| `inventory.feature` | Inventory catalog and container APIs | Active | Covers seeded equipment type listing, type create/update and error cases, container register/list/get/status override and error cases, and seeded availability counts. |
-| `persistence-runtime.feature` | Persistence and runtime storage behavior | Active | Covers runtime storage default/error behavior, SQLite empty first boot, SQLite restart persistence, API-visible local user/audit metadata persistence, and memory non-persistence. |
-| `playground-dev-tools.feature` | Playground development tooling | Active | Covers public playground assets, development reset/clear actions, generated bearer tokens, and non-development 404 behavior. |
-| `public-routes.feature` | Public routes | Active | Covers unauthenticated health, OpenAPI, root redirect, and anonymous rejection on protected APIs. |
-| `reservations.feature` | Reservations, container lifecycle, and booking events | Active | Covers atomic reservation assignment, insufficient-stock rollback, duplicate booking rejection, pickup/return lifecycle rules, reservation release outcomes, cancellation events, and completion event return/no-op/missing cases. |
+## Feature Contract Surface
 
-## Coverage Structure
-
-| Behavior area | Feature file | Scope |
+| Feature file | Contract area | Externally meaningful behavior covered |
 | --- | --- | --- |
-| Audit metadata and local users | `audit-metadata.feature`, `persistence-runtime.feature` | API-visible local caller metadata, stable user id reuse, audit log outcomes, read-route audit silence, and persistence across restart. |
-| Inventory and availability | `inventory.feature` | Equipment type and container inventory behavior visible through public APIs. |
-| Reservations and lifecycle | `reservations.feature` | Assignment, pickup, return, release, and invalid lifecycle transitions. |
-| Booking events | `reservations.feature` | Booking cancellation and completion events that release, return, or leave containers unchanged. |
-| Persistence runtime behavior | `persistence-runtime.feature` | User-visible behavior for configured runtime storage: defaults and validation, SQLite first boot, restart durability, API-visible metadata, and memory volatility. |
-| Public routes and authorization | `public-routes.feature`, `auth.feature`, `playground-dev-tools.feature` | Authenticated route behavior, Users Service admin protected endpoint access, public route behavior, and playground-facing development routes. |
+| `audit-metadata.feature` | Audit metadata and local callers | API-visible creator/modifier metadata on equipment, reservation, and container writes; stable local user reuse; rejection of partial caller metadata headers; read routes leaving the runtime audit log empty. |
+| `auth.feature` | Bearer authentication | Read-vs-modify scope enforcement, admin role access without equipment scopes, anonymous protected route rejection, Users Service token rejection without admin/read authorization, JWT audience/issuer/expiry/signature validation, exact admin role matching, scoped non-admin reads, and Users Service admin access across protected REST endpoints. |
+| `demo.feature` | Empty-database service flow | The documented empty SQLite database flow from type creation through container registration, availability, reservation, pickup, manual status change, return, release, and release rejection after dispatch. |
+| `inventory.feature` | Inventory catalog and container APIs | Seeded equipment type listing, type create/update behavior, type error responses, container register/list/fetch/status override behavior, container error responses, and seeded depot availability counts. |
+| `persistence-runtime.feature` | Runtime storage behavior | Memory default configuration, durable backend configuration errors, SQLite first boot from an empty database, SQLite restart durability for service writes, SQLite persistence of API-visible local user and audit metadata, and memory backend non-persistence. |
+| `playground-dev-tools.feature` | Playground and development tools | Public playground HTML/CSS/JS assets, displayed runtime backend details, development reset/clear effects, generated bearer tokens, generated admin token authorization, token subject validation, and non-development 404 behavior for dev-only actions. |
+| `public-routes.feature` | Public routes | Anonymous `/health`, `/openapi.json`, root redirect to `/playground`, OpenAPI service metadata/security scheme, and anonymous rejection on protected APIs. |
+| `reservations.feature` | Reservations, container lifecycle, and booking events | Atomic reservation assignment, insufficient-stock rollback, duplicate booking rejection, pickup/return lifecycle rules, release by booking reference, release/cancel rejection after pickup, cancellation release behavior, completion return behavior, completion no-op for reserved containers, and unknown completion no-op responses. |
 
-## Unit-Only Persistence and Migration Coverage
+## Service Test Coverage Map
 
-The behavior specs cover storage through externally meaningful runtime outcomes.
-The following persistence checks intentionally stay in TypeScript tests because
-they are backend implementation details or narrow migration guards:
+`test/service.test.ts` remains a lower-level service regression suite. Its
+externally observable scenarios are represented in Gherkin as follows:
 
-| Check area | Test file | Reason |
-| --- | --- | --- |
-| Backend alias normalization and exact runtime config object shapes | `test/persistence.test.ts` | Gherkin covers the default backend and missing durable-backend configuration errors; alias tables and object shape assertions are unit-level parser checks. |
-| SQLite/Postgres migration plans, schema versions, DDL columns, and unsupported future schemas | `test/persistence.test.ts` | These protect migration internals and should not be duplicated as behavior scenarios. |
-| Relational table row/column storage for users, audit metadata, authorization rules, reservations, and container links | `test/persistence.test.ts` | Gherkin verifies API-visible metadata and restart durability; SQL layout remains a backend contract. |
-| Snapshot parsing/backfill compatibility and clone semantics | `test/persistence.test.ts` | These are serialization compatibility checks below the service behavior boundary. |
-| Optional Postgres runtime persistence smoke coverage | `test/persistence.test.ts` | Requires `TEST_POSTGRES_URL` and is not part of the always-on multi-feature harness. |
+| `test/service.test.ts` scenario group | Gherkin contract location |
+| --- | --- |
+| Health, OpenAPI, root redirect, and anonymous protected-route rejection | `public-routes.feature` |
+| Scope checks, admin role checks, Users Service admin JWT validation, exact role matching, and scoped non-admin reads | `auth.feature` |
+| Users Service admin authorization across protected equipment, container, availability, reservation, lifecycle, event, and dev-tool endpoints | `auth.feature` |
+| Public playground assets, backend details, development reset/clear, generated user/admin tokens, required token subject validation, and non-development dev-tool 404s | `playground-dev-tools.feature` |
+| Equipment type list/create/update behavior and type error responses | `inventory.feature` |
+| Container register/list/fetch/status override behavior and container error responses | `inventory.feature` |
+| Seeded availability counts | `inventory.feature` |
+| Reservation assignment, insufficient stock, duplicate bookings, pickup/return rules, release rules, cancellation events, and completion events | `reservations.feature` |
+| API-visible audit metadata, stable local users, caller-header validation, and read-route audit silence | `audit-metadata.feature` |
+| Runtime storage defaults/errors, SQLite restart durability, persisted API-visible local user/audit metadata, and memory volatility | `persistence-runtime.feature` |
+| End-to-end empty-database walkthrough used by the documented demo | `demo.feature` |
 
-## Explicit Exclusions
+## Deliberate Implementation/Data-Layer Exclusions
 
-These low-level checks stay in TypeScript tests instead of executable Gherkin:
+The Gherkin suite intentionally does not make the following internals part of
+the replacement contract. They stay in TypeScript tests because they protect the
+current implementation rather than client-visible service behavior:
 
-- Unit-level store helper invariants and data structure edge cases.
-- Backend-specific migration DDL, migration ordering, and migration CLI status details.
-- Backend alias exhaustiveness, exact runtime config object shapes, and boolean parser edge cases.
-- Relational storage column checks for local users, audit metadata, authorization rules, and reservation links.
-- Serialization details for persistence snapshots that are not visible through service behavior.
-- Narrow validation helper branches that do not represent a user-observable workflow.
+| Excluded detail | Covered by |
+| --- | --- |
+| Migration DDL, migration ordering, schema version records, and future-schema guards | `test/persistence.test.ts` |
+| SQL row/column layout for local users, audit metadata, authorization rules, reservations, and container links | `test/persistence.test.ts` |
+| Snapshot parser, legacy snapshot backfill, and snapshot clone compatibility | `test/persistence.test.ts` |
+| Exact runtime config object parser shape | `test/persistence.test.ts` |
+| Optional Postgres smoke coverage requiring `TEST_POSTGRES_URL` | `test/persistence.test.ts` |
