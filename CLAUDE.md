@@ -12,12 +12,14 @@ Use the Node project gates:
 ```bash
 npm ci
 npm run build
-npm test
+npm run test:non-gherkin
+npm run test:gherkin
 ```
 
 `npm run build` type-checks the service and copies playground assets into
-`dist/`. `npm test` runs the Node test runner through `tsx` against
-`test/**/*.test.ts`.
+`dist/`. `npm run test:non-gherkin` runs the regular Node test files, and
+`npm run test:gherkin` runs the Gherkin feature suite. `npm test` runs both
+test suites for local convenience.
 
 Run `npm ci` whenever dependencies may be absent, including fresh refinery or
 worker clones.
