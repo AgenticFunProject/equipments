@@ -88,8 +88,13 @@ function withInvalidSignature(headers: { authorization: string }) {
   const [encodedHeader, encodedPayload, encodedSignature] = token.split(".");
   assert.ok(encodedHeader && encodedPayload && encodedSignature, "test token should be a JWT");
 
-  const replacement = encodedSignature.endsWith("a") ? "b" : "a";
-  const tamperedSignature = `${encodedSignature.slice(0, -1)}${replacement}`;
+  const replacement = encodedSignature.startsWith("a") ? "b" : "a";
+  const tamperedSignature = `${replacement}${encodedSignature.slice(1)}`;
+  assert.notDeepEqual(
+    Buffer.from(tamperedSignature, "base64url"),
+    Buffer.from(encodedSignature, "base64url"),
+    "test token signature tampering should change signature bytes"
+  );
   return { authorization: `Bearer ${encodedHeader}.${encodedPayload}.${tamperedSignature}` };
 }
 
