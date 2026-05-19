@@ -48,6 +48,9 @@ interface DemoState {
   latestContainerId: string | null;
   latestGeneratedToken: string | null;
   latestLocalUserId: string | null;
+  capturedEquipmentTypeCreatorUserId: string | null;
+  capturedEquipmentTypeModifierUserId: string | null;
+  capturedReservationUserId: string | null;
 }
 
 interface FeatureDocument {
@@ -112,7 +115,10 @@ function createDemoState(): DemoState {
     latestAssignedContainerIds: [],
     latestContainerId: null,
     latestGeneratedToken: null,
-    latestLocalUserId: null
+    latestLocalUserId: null,
+    capturedEquipmentTypeCreatorUserId: null,
+    capturedEquipmentTypeModifierUserId: null,
+    capturedReservationUserId: null
   };
 }
 
@@ -323,6 +329,13 @@ function authHeaderWithCallerMetadata(scopes: string[], subject: string) {
   };
 }
 
+function partialCallerMetadataHeaders(headers: Record<string, string>) {
+  return {
+    ...authHeader([Scope.MODIFY]),
+    ...headers
+  };
+}
+
 function latestBody<T>(state: DemoState): T {
   return state.latestBody as T;
 }
@@ -467,6 +480,12 @@ const stepDefinitions: StepDefinition[] = [
     pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with an admin bearer token without equipment scopes$/,
     run: async (state, method, url) => {
       await requestWithHeaders(state, method, url, adminBearerWithoutEquipmentScopes());
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with a Users Service admin bearer token$/,
+    run: async (state, method, url) => {
+      await requestWithHeaders(state, method, url, usersServiceAdminAuthHeader());
     }
   },
   {
@@ -720,6 +739,17 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I create equipment type "([^"]+)" described as "([^"]+)" with nominal length "([^"]+)" and max payload (\d+) with a Users Service admin bearer token$/,
+    run: async (state, code, description, nominalLength, maxPayloadKg) => {
+      await requestWithHeaders(state, "POST", "/equipment-types", usersServiceAdminAuthHeader(), {
+        code,
+        description,
+        nominalLength,
+        maxPayloadKg: Number(maxPayloadKg)
+      });
+    }
+  },
+  {
     pattern: /^I create equipment type "([^"]+)" described as "([^"]+)" with nominal length "([^"]+)" and max payload (\d+) as caller "([^"]+)"$/,
     run: async (state, code, description, nominalLength, maxPayloadKg, subject) => {
       await requestWithHeaders(state, "POST", "/equipment-types", authHeaderWithCallerMetadata([Scope.MODIFY], subject), {
@@ -729,6 +759,20 @@ const stepDefinitions: StepDefinition[] = [
         maxPayloadKg: Number(maxPayloadKg)
       });
       assert.equal(state.latestStatusCode, 201);
+    }
+  },
+  {
+    pattern: /^I try to create equipment type "([^"]+)" described as "([^"]+)" with nominal length "([^"]+)" and max payload (\d+) with only x-auth-(issuer|subject) caller metadata$/,
+    run: async (state, code, description, nominalLength, maxPayloadKg, metadataHeader) => {
+      const headers = metadataHeader === "issuer"
+        ? partialCallerMetadataHeaders({ "x-auth-issuer": authConfig.issuer })
+        : partialCallerMetadataHeaders({ "x-auth-subject": "ops-partial" });
+      await requestWithHeaders(state, "POST", "/equipment-types", headers, {
+        code,
+        description,
+        nominalLength,
+        maxPayloadKg: Number(maxPayloadKg)
+      });
     }
   },
   {
@@ -747,6 +791,24 @@ const stepDefinitions: StepDefinition[] = [
     run: async (state, code, description) => {
       await request(state, "PUT", `/equipment-types/${encodeURIComponent(code)}`, { description });
       assert.equal(state.latestStatusCode, 200);
+    }
+  },
+  {
+    pattern: /^I update equipment type "([^"]+)" description to "([^"]+)" with a Users Service admin bearer token$/,
+    run: async (state, code, description) => {
+      await requestWithHeaders(state, "PUT", `/equipment-types/${encodeURIComponent(code)}`, usersServiceAdminAuthHeader(), { description });
+    }
+  },
+  {
+    pattern: /^I update equipment type "([^"]+)" description to "([^"]+)" as caller "([^"]+)"$/,
+    run: async (state, code, description, subject) => {
+      await requestWithHeaders(
+        state,
+        "PUT",
+        `/equipment-types/${encodeURIComponent(code)}`,
+        authHeaderWithCallerMetadata([Scope.MODIFY], subject),
+        { description }
+      );
     }
   },
   {
@@ -808,6 +870,36 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^the latest equipment type list includes "([^"]+)"$/,
+    run: async (state, code) => {
+      const item = latestBody<{ equipmentTypes: Array<{ code: string }> }>(state)
+        .equipmentTypes.find((entry) => entry.code === code);
+      assert.ok(item, `expected latest equipment type list to include ${code}`);
+    }
+  },
+  {
+    pattern: /^the latest equipment type response has created and modified local user metadata for one caller$/,
+    run: async (state) => {
+      const body = latestBody<{ createdByUserId: string | null; lastModifiedByUserId: string | null }>(state);
+      assert.match(body.createdByUserId ?? "", /^usr-/);
+      assert.equal(body.lastModifiedByUserId, body.createdByUserId);
+      state.capturedEquipmentTypeCreatorUserId = body.createdByUserId;
+      state.capturedEquipmentTypeModifierUserId = body.lastModifiedByUserId;
+    }
+  },
+  {
+    pattern: /^the latest equipment type response preserves creator metadata and records a new modifier$/,
+    run: async (state) => {
+      assert.ok(state.capturedEquipmentTypeCreatorUserId, "expected captured creator user id");
+      assert.ok(state.capturedEquipmentTypeModifierUserId, "expected captured modifier user id");
+      const body = latestBody<{ createdByUserId: string | null; lastModifiedByUserId: string | null }>(state);
+      assert.equal(body.createdByUserId, state.capturedEquipmentTypeCreatorUserId);
+      assert.match(body.lastModifiedByUserId ?? "", /^usr-/);
+      assert.notEqual(body.lastModifiedByUserId, state.capturedEquipmentTypeModifierUserId);
+      state.capturedEquipmentTypeModifierUserId = body.lastModifiedByUserId;
+    }
+  },
+  {
     pattern: /^the runtime audit log contains a successful "([^"]+)" event for "([^"]+)"$/,
     run: async (state, action, resourceId) => {
       assert.ok(state.store, "expected access to the runtime store");
@@ -820,11 +912,31 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^the runtime audit log is empty$/,
+    run: async (state) => {
+      assert.ok(state.store, "expected access to the runtime store");
+      assert.deepEqual(state.store.listAuditEvents(), []);
+    }
+  },
+  {
     pattern: /^I register container "([^"]+)" of type "([^"]+)" at depot "([^"]+)"$/,
     run: async (state, containerNumber, equipmentType, currentDepot) => {
       await request(state, "POST", "/containers", { containerNumber, equipmentType, currentDepot });
       assert.equal(state.latestStatusCode, 201);
       state.latestContainerId = latestBody<{ id: string }>(state).id;
+    }
+  },
+  {
+    pattern: /^I register container "([^"]+)" of type "([^"]+)" at depot "([^"]+)" with a Users Service admin bearer token$/,
+    run: async (state, containerNumber, equipmentType, currentDepot) => {
+      await requestWithHeaders(state, "POST", "/containers", usersServiceAdminAuthHeader(), {
+        containerNumber,
+        equipmentType,
+        currentDepot
+      });
+      if (state.latestStatusCode === 201) {
+        state.latestContainerId = latestBody<{ id: string }>(state).id;
+      }
     }
   },
   {
@@ -852,6 +964,13 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I list containers with type "([^"]+)" status "([^"]+)" depot "([^"]+)" with a Users Service admin bearer token$/,
+    run: async (state, type, status, depot) => {
+      const query = new URLSearchParams({ type, status, depot });
+      await requestWithHeaders(state, "GET", `/containers?${query.toString()}`, usersServiceAdminAuthHeader());
+    }
+  },
+  {
     pattern: /^the latest container list includes container "([^"]+)"$/,
     run: async (state, containerNumber) => {
       const containers = latestBody<{ containers: Array<{ containerNumber: string }> }>(state).containers;
@@ -863,6 +982,13 @@ const stepDefinitions: StepDefinition[] = [
     run: async (state) => {
       assert.ok(state.latestContainerId, "expected a latest container id");
       await request(state, "GET", `/containers/${state.latestContainerId}`);
+    }
+  },
+  {
+    pattern: /^I fetch the latest container with a Users Service admin bearer token$/,
+    run: async (state) => {
+      assert.ok(state.latestContainerId, "expected a latest container id");
+      await requestWithHeaders(state, "GET", `/containers/${state.latestContainerId}`, usersServiceAdminAuthHeader());
     }
   },
   {
@@ -889,10 +1015,51 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^the latest availability response includes (\d+) units of "([^"]+)" at depot "([^"]+)"$/,
+    run: async (state, count, equipmentType, depotCode) => {
+      const item = latestBody<{ availability: Array<{ equipmentType: string; availableCount: number; depotCode: string }> }>(state)
+        .availability.find((entry) => entry.equipmentType === equipmentType && entry.depotCode === depotCode);
+      assert.ok(item, `expected latest availability response for ${equipmentType} at ${depotCode}`);
+      assert.equal(item.availableCount, Number(count));
+    }
+  },
+  {
     pattern: /^I reserve (\d+) units of "([^"]+)" at depot "([^"]+)" for booking "([^"]+)"$/,
     run: async (state, quantity, type, originDepot, bookingReference) => {
       await reserveContainers(state, quantity, type, originDepot, bookingReference);
       assert.equal(state.latestStatusCode, 201);
+    }
+  },
+  {
+    pattern: /^I reserve (\d+) units of "([^"]+)" at depot "([^"]+)" for booking "([^"]+)" with a Users Service admin bearer token$/,
+    run: async (state, quantity, type, originDepot, bookingReference) => {
+      await requestWithHeaders(state, "POST", "/reservations", usersServiceAdminAuthHeader(), {
+        bookingReference,
+        originDepot,
+        equipment: [{ type, quantity: Number(quantity) }]
+      });
+      if (state.latestStatusCode === 201) {
+        const body = latestBody<{ assignedContainers: Array<{ containerId: string }> }>(state);
+        state.latestAssignedContainerIds = body.assignedContainers.map((container) => container.containerId);
+        state.latestReservedContainerId = state.latestAssignedContainerIds[0] ?? null;
+        state.latestContainerId = state.latestReservedContainerId;
+      }
+    }
+  },
+  {
+    pattern: /^I reserve (\d+) units of "([^"]+)" at depot "([^"]+)" for booking "([^"]+)" as caller "([^"]+)"$/,
+    run: async (state, quantity, type, originDepot, bookingReference, subject) => {
+      await requestWithHeaders(state, "POST", "/reservations", authHeaderWithCallerMetadata([Scope.MODIFY], subject), {
+        bookingReference,
+        originDepot,
+        equipment: [{ type, quantity: Number(quantity) }]
+      });
+      if (state.latestStatusCode === 201) {
+        const body = latestBody<{ assignedContainers: Array<{ containerId: string }> }>(state);
+        state.latestAssignedContainerIds = body.assignedContainers.map((container) => container.containerId);
+        state.latestReservedContainerId = state.latestAssignedContainerIds[0] ?? null;
+        state.latestContainerId = state.latestReservedContainerId;
+      }
     }
   },
   {
@@ -917,6 +1084,15 @@ const stepDefinitions: StepDefinition[] = [
     pattern: /^the latest reservation status is "([^"]+)"$/,
     run: async (state, status) => {
       assert.equal(latestBody<{ status: string }>(state).status, status);
+    }
+  },
+  {
+    pattern: /^the latest reservation response has local user metadata for one caller$/,
+    run: async (state) => {
+      const body = latestBody<{ createdByUserId: string | null; lastModifiedByUserId: string | null }>(state);
+      assert.match(body.createdByUserId ?? "", /^usr-/);
+      assert.equal(body.lastModifiedByUserId, body.createdByUserId);
+      state.capturedReservationUserId = body.createdByUserId;
     }
   },
   {
@@ -948,6 +1124,31 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I pick up the latest reserved container with a Users Service admin bearer token$/,
+    run: async (state) => {
+      assert.ok(state.latestReservedContainerId, "expected a reserved container id");
+      await requestWithHeaders(state, "POST", `/containers/${state.latestReservedContainerId}/pickup`, usersServiceAdminAuthHeader());
+      if (state.latestStatusCode === 200) {
+        state.latestContainerId = state.latestReservedContainerId;
+      }
+    }
+  },
+  {
+    pattern: /^I pick up the latest reserved container as caller "([^"]+)"$/,
+    run: async (state, subject) => {
+      assert.ok(state.latestReservedContainerId, "expected a reserved container id");
+      await requestWithHeaders(
+        state,
+        "POST",
+        `/containers/${state.latestReservedContainerId}/pickup`,
+        authHeaderWithCallerMetadata([Scope.MODIFY], subject)
+      );
+      if (state.latestStatusCode === 200) {
+        state.latestContainerId = state.latestReservedContainerId;
+      }
+    }
+  },
+  {
     pattern: /^the latest container status is "([^"]+)"$/,
     run: async (state, status) => {
       assert.ok(state.latestContainerId, "expected a latest container id");
@@ -965,6 +1166,13 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I manually set the latest container status to "([^"]+)" with a Users Service admin bearer token$/,
+    run: async (state, status) => {
+      assert.ok(state.latestContainerId, "expected a latest container id");
+      await requestWithHeaders(state, "PATCH", `/containers/${state.latestContainerId}/status`, usersServiceAdminAuthHeader(), { status });
+    }
+  },
+  {
     pattern: /^I try to manually set the latest container status to "([^"]+)"$/,
     run: async (state, status) => {
       assert.ok(state.latestContainerId, "expected a latest container id");
@@ -977,6 +1185,13 @@ const stepDefinitions: StepDefinition[] = [
       assert.ok(state.latestContainerId, "expected a latest container id");
       await request(state, "POST", `/containers/${state.latestContainerId}/return`);
       assert.equal(state.latestStatusCode, 200);
+    }
+  },
+  {
+    pattern: /^I return the latest container with a Users Service admin bearer token$/,
+    run: async (state) => {
+      assert.ok(state.latestContainerId, "expected a latest container id");
+      await requestWithHeaders(state, "POST", `/containers/${state.latestContainerId}/return`, usersServiceAdminAuthHeader());
     }
   },
   {
@@ -1002,12 +1217,44 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I release booking "([^"]+)" with a Users Service admin bearer token$/,
+    run: async (state, bookingReference) => {
+      await requestWithHeaders(state, "DELETE", `/reservations/${bookingReference}`, usersServiceAdminAuthHeader());
+    }
+  },
+  {
     pattern: /^I receive a "([^"]+)" event for booking "([^"]+)"$/,
     run: async (state, eventType, bookingReference) => {
       await request(state, "POST", "/events", {
         eventType,
         payload: { bookingReference }
       });
+    }
+  },
+  {
+    pattern: /^I receive a "([^"]+)" event for booking "([^"]+)" with a Users Service admin bearer token$/,
+    run: async (state, eventType, bookingReference) => {
+      await requestWithHeaders(state, "POST", "/events", usersServiceAdminAuthHeader(), {
+        eventType,
+        payload: { bookingReference }
+      });
+    }
+  },
+  {
+    pattern: /^the latest container response last modified user matches the reservation local user$/,
+    run: async (state) => {
+      assert.ok(state.capturedReservationUserId, "expected captured reservation user id");
+      const body = latestBody<{ lastModifiedByUserId: string | null }>(state);
+      assert.equal(body.lastModifiedByUserId, state.capturedReservationUserId);
+    }
+  },
+  {
+    pattern: /^the latest container response has no creator and the same local last modifier$/,
+    run: async (state) => {
+      assert.ok(state.capturedReservationUserId, "expected captured reservation user id");
+      const body = latestBody<{ createdByUserId: string | null; lastModifiedByUserId: string | null }>(state);
+      assert.equal(body.createdByUserId, null);
+      assert.equal(body.lastModifiedByUserId, state.capturedReservationUserId);
     }
   },
   {

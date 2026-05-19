@@ -8,7 +8,8 @@ scenarios; the runner executes every scenario with fresh service state.
 
 | Feature file | Behavior area | Status | Notes |
 | --- | --- | --- | --- |
-| `auth.feature` | Bearer authentication | Active | Covers anonymous rejection, read-vs-modify scopes, and admin role access without equipment scopes. |
+| `audit-metadata.feature` | Audit metadata and local callers | Active | Covers API-visible caller metadata, stable local user reuse across reservation/container writes, partial caller header rejection, and read routes not emitting audit events. |
+| `auth.feature` | Bearer authentication | Active | Covers anonymous rejection, read-vs-modify scopes, admin role access without equipment scopes, Users Service admin JWT validation, and protected endpoint authorization. |
 | `demo.feature` | Documented empty-database equipment flow | Active | Covers catalog creation, container registration, availability, reservation, pickup, return, release, and release rejection after dispatch. |
 | `inventory.feature` | Inventory catalog and container APIs | Active | Covers seeded equipment type listing, type create/update and error cases, container register/list/get/status override and error cases, and seeded availability counts. |
 | `persistence-runtime.feature` | Persistence and runtime storage behavior | Active | Covers runtime storage default/error behavior, SQLite empty first boot, SQLite restart persistence, API-visible local user/audit metadata persistence, and memory non-persistence. |
@@ -20,11 +21,12 @@ scenarios; the runner executes every scenario with fresh service state.
 
 | Behavior area | Feature file | Scope |
 | --- | --- | --- |
+| Audit metadata and local users | `audit-metadata.feature`, `persistence-runtime.feature` | API-visible local caller metadata, stable user id reuse, audit log outcomes, read-route audit silence, and persistence across restart. |
 | Inventory and availability | `inventory.feature` | Equipment type and container inventory behavior visible through public APIs. |
 | Reservations and lifecycle | `reservations.feature` | Assignment, pickup, return, release, and invalid lifecycle transitions. |
 | Booking events | `reservations.feature` | Booking cancellation and completion events that release, return, or leave containers unchanged. |
 | Persistence runtime behavior | `persistence-runtime.feature` | User-visible behavior for configured runtime storage: defaults and validation, SQLite first boot, restart durability, API-visible metadata, and memory volatility. |
-| Public routes and authorization | `public-routes.feature`, `auth.feature`, `playground-dev-tools.feature` | Authenticated route behavior, public route behavior, and playground-facing development routes. |
+| Public routes and authorization | `public-routes.feature`, `auth.feature`, `playground-dev-tools.feature` | Authenticated route behavior, Users Service admin protected endpoint access, public route behavior, and playground-facing development routes. |
 
 ## Unit-Only Persistence and Migration Coverage
 
