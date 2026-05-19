@@ -284,13 +284,28 @@ curl -fsS -X POST "$EQUIPMENTS_URL/equipment-types" \
   -d "{\"code\":\"$VALIDATION_CODE\",\"description\":\"Local validation dry container\",\"nominalLength\":\"local\",\"maxPayloadKg\":1}"
 ```
 
-The browser playground stays publicly reachable so you can paste a bearer token into the UI before sending protected requests. It also calls out that `GET /health` is public while read routes need `equipments:read` and write routes need `equipments:modify`.
+### Playground Authorization and Admin Rights
+
+The browser playground stays publicly reachable so developers can inspect the API and paste a bearer token before sending protected requests. The service treats `GET /`, `GET /health`, `GET /openapi.json`, `GET /playground`, and `GET /playground/*` as public routes. `POST /dev/generate-token` is also public at the auth layer, but returns `404` outside development mode. Playground request presets mark `GET /health` as public; all other service presets are protected and need a bearer token before the request will authorize.
+
+Protected playground requests use the bearer token field exactly like any other API client:
+
+- read-only `GET` and `HEAD` service routes require the `equipments:read` scope
+- state-changing `POST`, `PUT`, `PATCH`, and `DELETE` service routes require the `equipments:modify` scope
+- tokens can carry both scopes for full scoped access
+- tokens with `role` set exactly to `admin` authorize every protected route without requiring Equipments-specific scopes
+
+Admin rights are represented only by the JWT `role: "admin"` claim. There is no separate Equipments admin-rights store or playground session state. The token still must pass the normal bearer-token checks: HS256 signature, matching issuer, matching audience, future expiry, and non-empty subject. Use a stable Users Service `users.id` as `sub` when the token represents a real admin.
+
+In local development (`NODE_ENV` not set to `production`), the playground shows a token generator. To test admin routes manually, select `role=admin` in the Token rights control, enter the subject to use for audit metadata, choose an expiry, and click `Generate Token`. The playground calls `POST /dev/generate-token`, which is public but available only in development mode, signs the token with the running service's `AUTH_JWT_*` configuration, and copies it into the bearer token field. Selecting `equipments:read`, `equipments:modify`, or `equipments:read + equipments:modify` generates scoped non-admin tokens instead.
+
+Production deployments do not expose local token generation. In production mode the playground keeps the bearer token field and scope guide, but the generator is replaced with copy that tells the developer to paste an externally issued token, and `POST /dev/generate-token` returns `404`. For production admin testing, obtain the bearer token from Users Service `POST /auth/token` or the production identity provider so the token contains either `role: "admin"` or the specific `equipments:*` scopes required by the route.
 
 The dev-only data actions are only exposed when `NODE_ENV` is not `production`:
 
 - `POST /dev/reset-all-data` resets in-memory or persisted runtime data back to the seeded baseline
 - `POST /dev/clear-all-data` removes runtime data without reseeding so the service stays empty until restart or manual re-creation
-- the playground shows `Reset All Data` and `Clear All Data` buttons only in development mode
+- the playground shows `Reset All Data` and `Clear All Data` buttons only in development mode; those controls require a bearer token with `equipments:modify` or `role: "admin"`
 - production mode returns `404` for both endpoints and hides the controls from the playground
 
 ### Build and Test
