@@ -10,16 +10,19 @@ scenarios; the runner executes every scenario with fresh service state.
 | --- | --- | --- | --- |
 | `auth.feature` | Bearer authentication | Active | Covers anonymous rejection, read-vs-modify scopes, and admin role access without equipment scopes. |
 | `demo.feature` | Documented empty-database equipment flow | Active | Covers catalog creation, container registration, availability, reservation, pickup, return, release, and release rejection after dispatch. |
+| `inventory.feature` | Inventory catalog and container APIs | Active | Covers seeded equipment type listing, type create/update and error cases, container register/list/get/status override and error cases, and seeded availability counts. |
 | `playground-dev-tools.feature` | Playground development tooling | Active | Covers public playground assets, development reset/clear actions, generated bearer tokens, and non-development 404 behavior. |
 | `public-routes.feature` | Public routes | Active | Covers unauthenticated health, OpenAPI, root redirect, and anonymous rejection on protected APIs. |
+| `reservations.feature` | Reservations, container lifecycle, and booking events | Active | Covers atomic reservation assignment, insufficient-stock rollback, duplicate booking rejection, pickup/return lifecycle rules, reservation release outcomes, cancellation events, and completion event return/no-op/missing cases. |
 
-## Planned Coverage Structure
+## Coverage Structure
 
 | Behavior area | Feature file | Scope |
 | --- | --- | --- |
 | Inventory and availability | `inventory.feature` | Equipment type and container inventory behavior visible through public APIs. |
 | Reservations and lifecycle | `reservations.feature` | Assignment, pickup, return, release, and invalid lifecycle transitions. |
-| Persistence runtime behavior | `persistence.feature` | User-visible behavior that must survive configured storage backends. |
+| Booking events | `reservations.feature` | Booking cancellation and completion events that release, return, or leave containers unchanged. |
+| Persistence runtime behavior | TypeScript tests | User-visible behavior that must survive configured storage backends. |
 | Public routes and authorization | `public-routes.feature`, `auth.feature`, `playground-dev-tools.feature` | Authenticated route behavior, public route behavior, and playground-facing development routes. |
 
 ## Explicit Exclusions

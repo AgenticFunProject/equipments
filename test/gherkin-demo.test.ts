@@ -22,6 +22,7 @@ interface DemoState {
   latestBody: unknown;
   latestBodyText: string;
   latestReservedContainerId: string | null;
+  latestAssignedContainerIds: string[];
   latestContainerId: string | null;
   latestGeneratedToken: string | null;
 }
@@ -81,6 +82,7 @@ function createDemoState(): DemoState {
     latestBody: null,
     latestBodyText: "",
     latestReservedContainerId: null,
+    latestAssignedContainerIds: [],
     latestContainerId: null,
     latestGeneratedToken: null
   };
@@ -247,6 +249,26 @@ function adminBearerWithoutEquipmentScopes() {
 
 function latestBody<T>(state: DemoState): T {
   return state.latestBody as T;
+}
+
+async function reserveContainers(
+  state: DemoState,
+  quantity: string,
+  type: string,
+  originDepot: string,
+  bookingReference: string
+): Promise<void> {
+  await request(state, "POST", "/reservations", {
+    bookingReference,
+    originDepot,
+    equipment: [{ type, quantity: Number(quantity) }]
+  });
+  if (state.latestStatusCode === 201) {
+    const body = latestBody<{ assignedContainers: Array<{ containerId: string }> }>(state);
+    state.latestAssignedContainerIds = body.assignedContainers.map((container) => container.containerId);
+    state.latestReservedContainerId = state.latestAssignedContainerIds[0] ?? null;
+    state.latestContainerId = state.latestReservedContainerId;
+  }
 }
 
 const stepDefinitions: StepDefinition[] = [
@@ -420,6 +442,30 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I try to create equipment type "([^"]+)" described as "([^"]+)" with nominal length "([^"]+)" and max payload (\d+)$/,
+    run: async (state, code, description, nominalLength, maxPayloadKg) => {
+      await request(state, "POST", "/equipment-types", {
+        code,
+        description,
+        nominalLength,
+        maxPayloadKg: Number(maxPayloadKg)
+      });
+    }
+  },
+  {
+    pattern: /^I update equipment type "([^"]+)" description to "([^"]+)"$/,
+    run: async (state, code, description) => {
+      await request(state, "PUT", `/equipment-types/${encodeURIComponent(code)}`, { description });
+      assert.equal(state.latestStatusCode, 200);
+    }
+  },
+  {
+    pattern: /^I try to update equipment type "([^"]+)" description to "([^"]+)"$/,
+    run: async (state, code, description) => {
+      await request(state, "PUT", `/equipment-types/${encodeURIComponent(code)}`, { description });
+    }
+  },
+  {
     pattern: /^the equipment type catalog contains (\d+) entries$/,
     run: async (state, count) => {
       await request(state, "GET", "/equipment-types");
@@ -428,10 +474,31 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^the equipment type catalog includes "([^"]+)" described as "([^"]+)"$/,
+    run: async (state, code, description) => {
+      await request(state, "GET", "/equipment-types");
+      assert.equal(state.latestStatusCode, 200);
+      const item = latestBody<{ equipmentTypes: Array<{ code: string; description: string }> }>(state)
+        .equipmentTypes.find((entry) => entry.code === code);
+      assert.ok(item, `expected equipment type ${code}`);
+      assert.equal(item.description, description);
+    }
+  },
+  {
     pattern: /^I register container "([^"]+)" of type "([^"]+)" at depot "([^"]+)"$/,
     run: async (state, containerNumber, equipmentType, currentDepot) => {
       await request(state, "POST", "/containers", { containerNumber, equipmentType, currentDepot });
       assert.equal(state.latestStatusCode, 201);
+      state.latestContainerId = latestBody<{ id: string }>(state).id;
+    }
+  },
+  {
+    pattern: /^I try to register container "([^"]+)" of type "([^"]+)" at depot "([^"]+)"$/,
+    run: async (state, containerNumber, equipmentType, currentDepot) => {
+      await request(state, "POST", "/containers", { containerNumber, equipmentType, currentDepot });
+      if (state.latestStatusCode === 201) {
+        state.latestContainerId = latestBody<{ id: string }>(state).id;
+      }
     }
   },
   {
@@ -440,6 +507,39 @@ const stepDefinitions: StepDefinition[] = [
       await request(state, "GET", "/containers");
       assert.equal(state.latestStatusCode, 200);
       assert.equal(latestBody<{ containers: unknown[] }>(state).containers.length, Number(count));
+    }
+  },
+  {
+    pattern: /^I list containers with type "([^"]+)" status "([^"]+)" depot "([^"]+)"$/,
+    run: async (state, type, status, depot) => {
+      const query = new URLSearchParams({ type, status, depot });
+      await request(state, "GET", `/containers?${query.toString()}`);
+    }
+  },
+  {
+    pattern: /^the latest container list includes container "([^"]+)"$/,
+    run: async (state, containerNumber) => {
+      const containers = latestBody<{ containers: Array<{ containerNumber: string }> }>(state).containers;
+      assert.ok(containers.some((container) => container.containerNumber === containerNumber), `expected container ${containerNumber}`);
+    }
+  },
+  {
+    pattern: /^I fetch the latest container$/,
+    run: async (state) => {
+      assert.ok(state.latestContainerId, "expected a latest container id");
+      await request(state, "GET", `/containers/${state.latestContainerId}`);
+    }
+  },
+  {
+    pattern: /^I fetch container "([^"]+)"$/,
+    run: async (state, containerId) => {
+      await request(state, "GET", `/containers/${containerId}`);
+    }
+  },
+  {
+    pattern: /^I try to set container "([^"]+)" status to "([^"]+)"$/,
+    run: async (state, containerId, status) => {
+      await request(state, "PATCH", `/containers/${containerId}/status`, { status });
     }
   },
   {
@@ -456,15 +556,14 @@ const stepDefinitions: StepDefinition[] = [
   {
     pattern: /^I reserve (\d+) units of "([^"]+)" at depot "([^"]+)" for booking "([^"]+)"$/,
     run: async (state, quantity, type, originDepot, bookingReference) => {
-      await request(state, "POST", "/reservations", {
-        bookingReference,
-        originDepot,
-        equipment: [{ type, quantity: Number(quantity) }]
-      });
+      await reserveContainers(state, quantity, type, originDepot, bookingReference);
       assert.equal(state.latestStatusCode, 201);
-      const body = latestBody<{ assignedContainers: Array<{ containerId: string }> }>(state);
-      state.latestReservedContainerId = body.assignedContainers[0]?.containerId ?? null;
-      state.latestContainerId = state.latestReservedContainerId;
+    }
+  },
+  {
+    pattern: /^I try to reserve (\d+) units of "([^"]+)" at depot "([^"]+)" for booking "([^"]+)"$/,
+    run: async (state, quantity, type, originDepot, bookingReference) => {
+      await reserveContainers(state, quantity, type, originDepot, bookingReference);
     }
   },
   {
@@ -474,11 +573,42 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^the latest reservation assigned (\d+) containers$/,
+    run: async (state, count) => {
+      assert.equal(state.latestAssignedContainerIds.length, Number(count));
+    }
+  },
+  {
+    pattern: /^the latest reservation status is "([^"]+)"$/,
+    run: async (state, status) => {
+      assert.equal(latestBody<{ status: string }>(state).status, status);
+    }
+  },
+  {
+    pattern: /^all containers assigned to the latest reservation have status "([^"]+)"$/,
+    run: async (state, status) => {
+      assert.notEqual(state.latestAssignedContainerIds.length, 0, "expected assigned containers");
+      for (const containerId of state.latestAssignedContainerIds) {
+        await request(state, "GET", `/containers/${containerId}`);
+        assert.equal(state.latestStatusCode, 200);
+        assert.equal(latestBody<{ status: string }>(state).status, status);
+      }
+    }
+  },
+  {
     pattern: /^I pick up the latest reserved container$/,
     run: async (state) => {
       assert.ok(state.latestReservedContainerId, "expected a reserved container id");
       await request(state, "POST", `/containers/${state.latestReservedContainerId}/pickup`);
       assert.equal(state.latestStatusCode, 200);
+      state.latestContainerId = state.latestReservedContainerId;
+    }
+  },
+  {
+    pattern: /^I try to pick up the latest reserved container$/,
+    run: async (state) => {
+      assert.ok(state.latestReservedContainerId, "expected a reserved container id");
+      await request(state, "POST", `/containers/${state.latestReservedContainerId}/pickup`);
       state.latestContainerId = state.latestReservedContainerId;
     }
   },
@@ -500,11 +630,25 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I try to manually set the latest container status to "([^"]+)"$/,
+    run: async (state, status) => {
+      assert.ok(state.latestContainerId, "expected a latest container id");
+      await request(state, "PATCH", `/containers/${state.latestContainerId}/status`, { status });
+    }
+  },
+  {
     pattern: /^I return the latest container$/,
     run: async (state) => {
       assert.ok(state.latestContainerId, "expected a latest container id");
       await request(state, "POST", `/containers/${state.latestContainerId}/return`);
       assert.equal(state.latestStatusCode, 200);
+    }
+  },
+  {
+    pattern: /^I try to return the latest container$/,
+    run: async (state) => {
+      assert.ok(state.latestContainerId, "expected a latest container id");
+      await request(state, "POST", `/containers/${state.latestContainerId}/return`);
     }
   },
   {
@@ -520,6 +664,15 @@ const stepDefinitions: StepDefinition[] = [
     pattern: /^I release booking "([^"]+)"$/,
     run: async (state, bookingReference) => {
       await request(state, "DELETE", `/reservations/${bookingReference}`);
+    }
+  },
+  {
+    pattern: /^I receive a "([^"]+)" event for booking "([^"]+)"$/,
+    run: async (state, eventType, bookingReference) => {
+      await request(state, "POST", "/events", {
+        eventType,
+        payload: { bookingReference }
+      });
     }
   },
   {
