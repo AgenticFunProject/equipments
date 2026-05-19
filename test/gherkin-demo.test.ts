@@ -16,8 +16,21 @@ import {
 } from "../src/persistence/index.js";
 import { buildServer } from "../src/server.js";
 import { createStoreFromRuntimeConfig, EquipmentsStore } from "../src/store.js";
+import { SERVICE_VERSION } from "../src/version.js";
 
 const authConfig = loadBearerAuthConfig({});
+const usersServiceUserId = "usr_01HV7M6J7Q3K5M8Y2V9N4A1B2C";
+const usersServiceAdminScope = `${Scope.READ} ${Scope.MODIFY}`;
+
+type JwtAuthOverrides = Partial<{
+  subject: string;
+  issuer: string;
+  audience: string | string[];
+  expiresAt: number;
+  issuedAt: number;
+  scope: string;
+  role: string;
+}>;
 
 interface DemoState {
   app: FastifyInstance | null;
@@ -238,16 +251,29 @@ function authHeaderForMethod(method: string) {
   return authHeader(scopes);
 }
 
-function authHeader(scopes: string[], overrides: { role?: string; subject?: string } = {}) {
+function authHeader(scopes: string[], overrides: JwtAuthOverrides = {}) {
   const now = Math.floor(Date.now() / 1000);
-  const payload = {
+  const payload: {
+    sub: string;
+    iss: string;
+    aud: string | string[];
+    exp: number;
+    iat?: number;
+    scope: string;
+    role?: string;
+  } = {
     sub: overrides.subject ?? "demo-client",
-    iss: authConfig.issuer,
-    aud: authConfig.audience,
-    exp: now + 3600,
-    scope: scopes.join(" "),
-    ...(overrides.role ? { role: overrides.role } : {})
+    iss: overrides.issuer ?? authConfig.issuer,
+    aud: overrides.audience ?? authConfig.audience,
+    exp: overrides.expiresAt ?? now + 3600,
+    scope: overrides.scope ?? scopes.join(" ")
   };
+  if (overrides.issuedAt !== undefined) {
+    payload.iat = overrides.issuedAt;
+  }
+  if (overrides.role !== undefined) {
+    payload.role = overrides.role;
+  }
   const header = { alg: "HS256", typ: "JWT" };
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -260,6 +286,33 @@ function authHeader(scopes: string[], overrides: { role?: string; subject?: stri
 
 function adminBearerWithoutEquipmentScopes() {
   return authHeader([], { role: "admin" });
+}
+
+function usersServiceAdminAuthHeader(overrides: JwtAuthOverrides = {}) {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  return authHeader([], {
+    subject: usersServiceUserId,
+    issuedAt,
+    expiresAt: issuedAt + 3600,
+    scope: usersServiceAdminScope,
+    role: "admin",
+    ...overrides
+  });
+}
+
+function withInvalidSignature(headers: { authorization: string }) {
+  const token = headers.authorization.replace(/^Bearer\s+/i, "");
+  const [encodedHeader, encodedPayload, encodedSignature] = token.split(".");
+  assert.ok(encodedHeader && encodedPayload && encodedSignature, "test token should be a JWT");
+
+  const replacement = encodedSignature.startsWith("A") ? "B" : "A";
+  const tamperedSignature = `${replacement}${encodedSignature.slice(1)}`;
+  assert.notDeepEqual(
+    Buffer.from(tamperedSignature, "base64url"),
+    Buffer.from(encodedSignature, "base64url"),
+    "test token should have different signature bytes"
+  );
+  return { authorization: `Bearer ${encodedHeader}.${encodedPayload}.${tamperedSignature}` };
 }
 
 function authHeaderWithCallerMetadata(scopes: string[], subject: string) {
@@ -387,6 +440,12 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^the seeded equipments service is running with sqlite persistence at path "([^"]+)"$/,
+    run: async (state, path) => {
+      await replaceService(state, new EquipmentsStore(true), { backend: StorageBackend.SQLITE, path });
+    }
+  },
+  {
     pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" without a bearer token$/,
     run: async (state, method, url) => {
       await requestWithHeaders(state, method, url);
@@ -408,6 +467,44 @@ const stepDefinitions: StepDefinition[] = [
     pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with an admin bearer token without equipment scopes$/,
     run: async (state, method, url) => {
       await requestWithHeaders(state, method, url, adminBearerWithoutEquipmentScopes());
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with a Users Service admin bearer token without required scope$/,
+    run: async (state, method, url) => {
+      await requestWithHeaders(state, method, url, usersServiceAdminAuthHeader({ scope: "", role: undefined }));
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with a Users Service admin bearer token for audience "([^"]+)"$/,
+    run: async (state, method, url, audience) => {
+      await requestWithHeaders(state, method, url, usersServiceAdminAuthHeader({ audience }));
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with a Users Service admin bearer token from issuer "([^"]+)"$/,
+    run: async (state, method, url, issuer) => {
+      await requestWithHeaders(state, method, url, usersServiceAdminAuthHeader({ issuer }));
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with an expired Users Service admin bearer token$/,
+    run: async (state, method, url) => {
+      await requestWithHeaders(state, method, url, usersServiceAdminAuthHeader({
+        expiresAt: Math.floor(Date.now() / 1000) - 60
+      }));
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with a Users Service admin bearer token that has an invalid signature$/,
+    run: async (state, method, url) => {
+      await requestWithHeaders(state, method, url, withInvalidSignature(usersServiceAdminAuthHeader()));
+    }
+  },
+  {
+    pattern: /^I request (GET|POST|PUT|PATCH|DELETE) "([^"]+)" with a bearer token role "([^"]+)" and no equipment scopes$/,
+    run: async (state, method, url, role) => {
+      await requestWithHeaders(state, method, url, authHeader([], { role }));
     }
   },
   {
@@ -451,6 +548,48 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^I generate a development admin bearer token for subject "([^"]+)"$/,
+    run: async (state, subject) => {
+      await requestWithHeaders(state, "POST", "/dev/generate-token", undefined, {
+        subject,
+        scopes: [],
+        role: "admin",
+        expiresInMinutes: 60
+      });
+      if (state.latestStatusCode === 201) {
+        state.latestGeneratedToken = latestBody<{ token: string }>(state).token;
+      }
+    }
+  },
+  {
+    pattern: /^I try to generate a development bearer token with a blank subject$/,
+    run: async (state) => {
+      await requestWithHeaders(state, "POST", "/dev/generate-token", undefined, {
+        subject: "",
+        scopes: [],
+        expiresInMinutes: 0
+      });
+    }
+  },
+  {
+    pattern: /^I create equipment type "([^"]+)" described as "([^"]+)" with nominal length "([^"]+)" and max payload (\d+) with the latest generated bearer token$/,
+    run: async (state, code, description, nominalLength, maxPayloadKg) => {
+      assert.ok(state.latestGeneratedToken, "expected a generated bearer token");
+      await requestWithHeaders(state, "POST", "/equipment-types", { authorization: `Bearer ${state.latestGeneratedToken}` }, {
+        code,
+        description,
+        nominalLength,
+        maxPayloadKg: Number(maxPayloadKg)
+      });
+    }
+  },
+  {
+    pattern: /^the latest JSON response has field "([^"]+)" equal to the service version$/,
+    run: async (state, field) => {
+      assert.equal(latestBody<Record<string, unknown>>(state)[field], SERVICE_VERSION);
+    }
+  },
+  {
     pattern: /^the latest JSON response has field "([^"]+)" equal to "([^"]+)"$/,
     run: async (state, field, value) => {
       assert.equal(latestBody<Record<string, unknown>>(state)[field], value);
@@ -463,9 +602,37 @@ const stepDefinitions: StepDefinition[] = [
     }
   },
   {
+    pattern: /^the latest JSON response has string array field "([^"]+)" containing exactly "([^"]+)"$/,
+    run: async (state, field, value) => {
+      assert.deepEqual(latestBody<Record<string, unknown>>(state)[field], [value]);
+    }
+  },
+  {
+    pattern: /^the latest JSON response has empty array field "([^"]+)"$/,
+    run: async (state, field) => {
+      assert.deepEqual(latestBody<Record<string, unknown>>(state)[field], []);
+    }
+  },
+  {
+    pattern: /^the latest OpenAPI response title is "([^"]+)"$/,
+    run: async (state, title) => {
+      assert.equal(latestBody<{ info: { title: string } }>(state).info.title, title);
+    }
+  },
+  {
     pattern: /^the latest OpenAPI response exposes path "([^"]+)"$/,
     run: async (state, path) => {
       assert.ok(latestBody<{ paths: Record<string, unknown> }>(state).paths[path], `expected OpenAPI path ${path}`);
+    }
+  },
+  {
+    pattern: /^the latest OpenAPI bearerAuth security scheme has type "([^"]+)" and scheme "([^"]+)"$/,
+    run: async (state, type, scheme) => {
+      const bearerAuth = latestBody<{
+        components: { securitySchemes: { bearerAuth: { type: string; scheme: string } } };
+      }>(state).components.securitySchemes.bearerAuth;
+      assert.equal(bearerAuth.type, type);
+      assert.equal(bearerAuth.scheme, scheme);
     }
   },
   {
@@ -487,6 +654,27 @@ const stepDefinitions: StepDefinition[] = [
     pattern: /^the latest response body contains "([^"]+)"$/,
     run: async (state, fragment) => {
       assert.ok(state.latestBodyText.includes(fragment), `expected response body to contain ${fragment}`);
+    }
+  },
+  {
+    pattern: /^the latest response body does not contain "([^"]+)"$/,
+    run: async (state, fragment) => {
+      assert.equal(state.latestBodyText.includes(fragment), false, `expected response body not to contain ${fragment}`);
+    }
+  },
+  {
+    pattern: /^the latest playground script handles admin token rights$/,
+    run: async (state) => {
+      assert.ok(state.latestBodyText.includes('case "admin"'), "expected playground script to handle admin token rights");
+    }
+  },
+  {
+    pattern: /^the latest playground script loads the availability preset by default$/,
+    run: async (state) => {
+      assert.ok(
+        state.latestBodyText.includes('loadPreset("availability")'),
+        "expected playground script to load the availability preset by default"
+      );
     }
   },
   {
@@ -839,6 +1027,12 @@ const stepDefinitions: StepDefinition[] = [
     pattern: /^the latest error contains "([^"]+)"$/,
     run: async (state, fragment) => {
       assert.match(latestBody<{ error: string }>(state).error, new RegExp(fragment));
+    }
+  },
+  {
+    pattern: /^the latest error is "([^"]+)"$/,
+    run: async (state, error) => {
+      assert.equal(latestBody<{ error: string }>(state).error, error);
     }
   }
 ];
