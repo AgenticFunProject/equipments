@@ -37,8 +37,8 @@ jobs:
       - name: Gherkin feature tests
         run: npm run test:gherkin
 
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browser dependencies
+        run: npm run test:ui:install
 
       - name: Browser playground UI tests
         run: npm run test:ui

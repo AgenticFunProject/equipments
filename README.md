@@ -323,17 +323,25 @@ compiled service, opens `/playground`, clicks the dev token generator, and sends
 a protected request through the visible controls:
 
 ```bash
-npx playwright install --with-deps chromium
+npm run test:ui:install
 npm run test:ui
 npm run test:ui:headed
 ```
+
+Run `npm run test:ui:install` once on fresh local checkouts, after `npm ci`, and
+again when the Playwright version changes. It installs the Chromium browser and,
+on supported Linux distributions, the host libraries Chromium needs before
+`npm run test:ui` or `npm run test:ui:headed` can launch a browser. Those test
+commands intentionally do not reinstall Chromium on every run; CI runs the same
+install script as a separate step before the browser tests.
 
 `npm run test:ui:headed` opens a real browser so the token generation and
 protected request clicks can be watched locally. On UI test failure, Playwright
 keeps traces, screenshots, and videos under `test-results/`, and writes the HTML
 report to `playwright-report/`. If your Linux user cannot run the dependency
-installer, ask an administrator to install the Playwright Chromium host
-dependencies first. Open a trace with:
+installer because system package installation requires elevated privileges, ask
+an administrator to run `npm run test:ui:install` or install the Playwright
+Chromium host dependencies first. Open a trace with:
 
 ```bash
 npx playwright show-trace test-results/<failed-test>/trace.zip

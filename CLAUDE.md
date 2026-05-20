@@ -14,6 +14,7 @@ npm ci
 npm run build
 npm run test:non-gherkin
 npm run test:gherkin
+npm run test:ui:install
 npm run test:ui
 ```
 
@@ -22,8 +23,9 @@ npm run test:ui
 `npm run test:gherkin` runs the Gherkin feature suite. `npm test` runs both
 test suites for local convenience. `npm run test:ui` runs the Playwright
 playground smoke test; use `npm run test:ui:headed` when you need to watch the
-browser clicks locally. Fresh Linux environments need `npx playwright install --with-deps chromium`
-before the UI test can launch a browser.
+browser clicks locally. Fresh Linux environments need `npm run test:ui:install`
+before the UI test can launch Chromium because it installs the Playwright
+browser plus required host system libraries.
 
 Run `npm ci` whenever dependencies may be absent, including fresh refinery or
 worker clones.
