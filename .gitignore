@@ -63,6 +63,8 @@ backup/
 .runtime/
 dist/
 node_modules/
+playwright-report/
+test-results/
 
 # Legacy files (from pre-Dolt versions)
 *.db

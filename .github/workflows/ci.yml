@@ -36,3 +36,19 @@ jobs:
 
       - name: Gherkin feature tests
         run: npm run test:gherkin
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser playground UI tests
+        run: npm run test:ui
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
