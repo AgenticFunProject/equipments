@@ -4,6 +4,7 @@ Every service version bump must add or update an entry in this file.
 
 ## Unreleased
 
+- Added a slower headed Playwright UI test script for local browser walkthroughs.
 - Added a `test:ui:install` script for Playwright Chromium browser and host dependency setup, and stopped reinstalling Chromium inside every UI test run.
 - Added a Playwright browser smoke test for the playground, including local headed debugging commands and CI artifact upload for traces, screenshots, videos, and reports.
 - Added Users Service admin JWT support for Equipments auth and documented the shared issuer, audience, and signing-secret configuration required for deployment.
