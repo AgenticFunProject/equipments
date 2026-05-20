@@ -14,6 +14,8 @@ jobs:
   node:
     name: Node 22 build and tests
     runs-on: ubuntu-latest
+    outputs:
+      playwright_report_available: ${{ steps.playwright-report.outputs.available }}
 
     steps:
       - name: Checkout
@@ -52,3 +54,55 @@ jobs:
             playwright-report/
             test-results/
           if-no-files-found: ignore
+
+      - name: Prepare Playwright report for Pages
+        id: playwright-report
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && ( "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == "refs/heads/master" ) && -f playwright-report/index.html ]]; then
+            mkdir -p playwright-report-pages
+            cp -R playwright-report/. playwright-report-pages/
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Playwright report Pages artifact
+        if: always() && steps.playwright-report.outputs.available == 'true'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: playwright-report-pages
+
+  deploy-playwright-report:
+    name: Publish Playwright report
+    needs: node
+    if: ${{ always() && needs.node.result != 'cancelled' && needs.node.outputs.playwright_report_available == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy Playwright report
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Add report link to summary
+        run: |
+          {
+            echo "### Playwright report"
+            echo ""
+            echo "[Open the browser UI test report](${{ steps.deployment.outputs.page_url }})"
+            echo ""
+            echo "The downloadable \`playwright-artifacts\` artifact is still kept as a per-run fallback with traces and videos."
+          } >> "$GITHUB_STEP_SUMMARY"

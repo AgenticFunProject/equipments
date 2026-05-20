@@ -344,11 +344,14 @@ and videos under `test-results/` when a test fails, and write the HTML report to
 `playwright-report/`. GitHub Actions records Playwright traces and videos for
 successful UI runs too, then uploads a `playwright-artifacts` artifact with
 `playwright-report/` and `test-results/`; download it from the workflow run to
-find `test-results/**/trace.zip` and video `.webm` files. If your Linux user
-cannot run the dependency installer because system package installation requires
-elevated privileges, ask an administrator to run `npm run test:ui:install` or
-install the Playwright Chromium host dependencies first. Open a downloaded or
-local trace with:
+find `test-results/**/trace.zip` and video `.webm` files. On `main` and `master`
+pushes, CI also publishes the Playwright HTML report to GitHub Pages and adds an
+`Open the browser UI test report` link to the workflow summary. The Pages link is
+the latest published report, while the downloadable artifact remains the per-run
+fallback for trace and video files. If your Linux user cannot run the dependency
+installer because system package installation requires elevated privileges, ask
+an administrator to run `npm run test:ui:install` or install the Playwright
+Chromium host dependencies first. Open a downloaded or local trace with:
 
 ```bash
 npx playwright show-trace path/to/trace.zip

@@ -4,6 +4,7 @@ Every service version bump must add or update an entry in this file.
 
 ## Unreleased
 
+- Added GitHub Actions publishing for the Playwright HTML report so successful master/main pushes expose a clickable report link from the workflow summary.
 - Added a slower headed Playwright UI test script for local browser walkthroughs.
 - Added a `test:ui:install` script for Playwright Chromium browser and host dependency setup, and stopped reinstalling Chromium inside every UI test run.
 - Added a Playwright browser smoke test for the playground, including local headed debugging commands and CI artifact upload for traces, screenshots, videos, and reports.

@@ -31,7 +31,10 @@ installs the Playwright browser plus required host system libraries.
 In GitHub Actions, successful browser UI runs also keep replay artifacts. The
 workflow uploads `playwright-artifacts` with `playwright-report/` and
 `test-results/`, including `test-results/**/trace.zip` and video `.webm` files.
-Replay a downloaded trace with `npx playwright show-trace path/to/trace.zip`.
+On `main` and `master` pushes, the workflow also deploys the Playwright HTML
+report to GitHub Pages and writes the clickable report link to the Actions run
+summary. Replay a downloaded trace with
+`npx playwright show-trace path/to/trace.zip`.
 
 Run `npm ci` whenever dependencies may be absent, including fresh refinery or
 worker clones.
