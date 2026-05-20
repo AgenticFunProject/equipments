@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const port = Number(process.env.PLAYWRIGHT_PORT ?? 3100);
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`;
 const isCI = Boolean(process.env.CI);
+const slowMo = Number(process.env.PLAYWRIGHT_SLOW_MO ?? 0);
 
 export default defineConfig({
   testDir: "./test",
@@ -23,7 +24,8 @@ export default defineConfig({
     baseURL,
     screenshot: "only-on-failure",
     trace: isCI ? "on" : "retain-on-failure",
-    video: isCI ? "on" : "retain-on-failure"
+    video: isCI ? "on" : "retain-on-failure",
+    ...(slowMo > 0 ? { launchOptions: { slowMo } } : {})
   },
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined

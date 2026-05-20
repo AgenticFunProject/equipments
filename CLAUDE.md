@@ -23,9 +23,11 @@ npm run test:ui
 `npm run test:gherkin` runs the Gherkin feature suite. `npm test` runs both
 test suites for local convenience. `npm run test:ui` runs the Playwright
 playground smoke test; use `npm run test:ui:headed` when you need to watch the
-browser clicks locally. Fresh Linux environments need `npm run test:ui:install`
-before the UI test can launch Chromium because it installs the Playwright
-browser plus required host system libraries.
+browser clicks locally, or `npm run test:ui:headed:slow` when you need the same
+headed smoke test slowed down enough to follow each step. Fresh Linux
+environments need `npm run test:ui:install` before the UI test can launch
+Chromium because it installs the Playwright browser plus required host system
+libraries.
 
 In GitHub Actions, successful browser UI runs also keep replay artifacts. The
 workflow uploads `playwright-artifacts` with `playwright-report/` and

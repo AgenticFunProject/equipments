@@ -21,6 +21,7 @@
     "test:ui:install": "playwright install --with-deps chromium",
     "test:ui": "npm run build && playwright test",
     "test:ui:headed": "npm run build && playwright test --headed",
+    "test:ui:headed:slow": "npm run build && PLAYWRIGHT_SLOW_MO=750 playwright test --headed --workers=1",
     "test:ui:report": "playwright show-report",
     "sync:github-board": "node scripts/sync-github-board.mjs"
   },
