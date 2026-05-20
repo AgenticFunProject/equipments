@@ -336,15 +336,19 @@ commands intentionally do not reinstall Chromium on every run; CI runs the same
 install script as a separate step before the browser tests.
 
 `npm run test:ui:headed` opens a real browser so the token generation and
-protected request clicks can be watched locally. On UI test failure, Playwright
-keeps traces, screenshots, and videos under `test-results/`, and writes the HTML
-report to `playwright-report/`. If your Linux user cannot run the dependency
-installer because system package installation requires elevated privileges, ask
-an administrator to run `npm run test:ui:install` or install the Playwright
-Chromium host dependencies first. Open a trace with:
+protected request clicks can be watched locally. Local UI test runs keep traces,
+screenshots, and videos under `test-results/` when a test fails, and write the
+HTML report to `playwright-report/`. GitHub Actions records Playwright traces and
+videos for successful UI runs too, then uploads a `playwright-artifacts` artifact
+with `playwright-report/` and `test-results/`; download it from the workflow run
+to find `test-results/**/trace.zip` and video `.webm` files. If your Linux user
+cannot run the dependency installer because system package installation requires
+elevated privileges, ask an administrator to run `npm run test:ui:install` or
+install the Playwright Chromium host dependencies first. Open a downloaded or
+local trace with:
 
 ```bash
-npx playwright show-trace test-results/<failed-test>/trace.zip
+npx playwright show-trace path/to/trace.zip
 ```
 
 Open the HTML report with:

@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.PLAYWRIGHT_PORT ?? 3100);
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`;
+const isCI = Boolean(process.env.CI);
 
 export default defineConfig({
   testDir: "./test",
@@ -11,8 +12,8 @@ export default defineConfig({
     timeout: 5_000
   },
   fullyParallel: true,
-  forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 1 : 0,
+  forbidOnly: isCI,
+  retries: isCI ? 1 : 0,
   reporter: [
     ["list"],
     ["html", { outputFolder: "playwright-report", open: "never" }]
@@ -21,15 +22,15 @@ export default defineConfig({
   use: {
     baseURL,
     screenshot: "only-on-failure",
-    trace: "retain-on-failure",
-    video: "retain-on-failure"
+    trace: isCI ? "on" : "retain-on-failure",
+    video: isCI ? "on" : "retain-on-failure"
   },
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
         command: `PORT=${port} HOST=127.0.0.1 npm run start`,
         url: `${baseURL}/health`,
-        reuseExistingServer: !process.env.CI,
+        reuseExistingServer: !isCI,
         timeout: 120_000
       },
   projects: [
